@@ -71,7 +71,18 @@ app.post('/create-group', async (req, res) => {
   try {
     const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title } = req.body;
     
+    // #region agent log
+    const fs = require('fs');
+    const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
+    const logEntry = JSON.stringify({location:'mtproto-service/server.js:72',message:'MTProto received request body',data:{listing_id,owner_telegram_id,renter_telegram_id,manager_telegram_id,listing_title,rawBody:req.body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})+'\n';
+    fs.appendFileSync(logPath, logEntry);
+    // #endregion
+    
     if (!listing_id || !owner_telegram_id || !renter_telegram_id || !manager_telegram_id) {
+      // #region agent log
+      const logEntry2 = JSON.stringify({location:'mtproto-service/server.js:75',message:'MTProto missing parameters',data:{hasListingId:!!listing_id,hasOwnerTelegramId:!!owner_telegram_id,hasRenterTelegramId:!!renter_telegram_id,hasManagerTelegramId:!!manager_telegram_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})+'\n';
+      fs.appendFileSync(logPath, logEntry2);
+      // #endregion
       return res.status(400).json({ 
         error: 'Missing required parameters: listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id' 
       });
