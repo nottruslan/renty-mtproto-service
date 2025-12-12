@@ -451,12 +451,30 @@ app.post('/create-group', async (req, res) => {
     
     let ownerInfo = null;
     let renterInfo = null;
-    let thirdMessageTimeout = null; // Для отмены третьего сообщения, если нужно
+    let thirdMessageSent = false; // ✅ Защита от повторной отправки третьего сообщения
     
     // ✅ Функция для отправки третьего сообщения (общая информация об участниках)
     async function sendThirdMessage() {
+      // ✅ Защита от повторной отправки
+      if (thirdMessageSent) {
+        console.log('[MTProto] ⚠️ Третье сообщение уже было отправлено, пропускаем...');
+        return;
+      }
+      
       try {
         console.log('[MTProto] 📨 Отправка третьего сообщения с информацией об участниках...');
+        console.log('[MTProto] 📊 Проверка переменных: chatPeer=', !!chatPeer, ', ownerInfo=', !!ownerInfo, ', renterInfo=', !!renterInfo);
+        
+        // #region agent log
+        const fs = require('fs');
+        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
+        try {
+          const logEntry = JSON.stringify({location:'mtproto-service/server.js:465',message:'sendThirdMessage called',data:{thirdMessageSent:thirdMessageSent,participantCount,hasChatPeer:!!chatPeer,hasOwnerInfo:!!ownerInfo,hasRenterInfo:!!renterInfo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_START'})+'\n';
+          fs.appendFileSync(logPath, logEntry);
+        } catch (e) {}
+        // #endregion
+        
+        thirdMessageSent = true; // Устанавливаем флаг до отправки, чтобы предотвратить повторную отправку
         
         // Получаем информацию о всех участниках, если еще не получили
         if (!ownerInfo && owner_telegram_id) {
@@ -494,6 +512,7 @@ app.post('/create-group', async (req, res) => {
         console.log('[MTProto] ✅ Третье сообщение отправлено');
       } catch (error) {
         console.error('[MTProto] ❌ Ошибка при отправке третьего сообщения:', error.message);
+        thirdMessageSent = false; // Сбрасываем флаг при ошибке, чтобы можно было повторить
       }
     }
     
@@ -502,6 +521,14 @@ app.post('/create-group', async (req, res) => {
     
     // ✅ УПРОЩЕНО: Добавляем участников по очереди и отправляем сообщения
     let participantCount = 0;
+    console.log('[MTProto] 📊 Начальное значение participantCount:', participantCount);
+    
+    // #region agent log
+    try {
+      const logEntry = JSON.stringify({location:'mtproto-service/server.js:513',message:'Starting participant addition',data:{participantCount,owner_telegram_id,renter_telegram_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'PARTICIPANT_COUNT'})+'\n';
+      fs.appendFileSync(logPath, logEntry);
+    } catch (e) {}
+    // #endregion
     
     // Добавляем owner
     if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
@@ -511,10 +538,20 @@ app.post('/create-group', async (req, res) => {
       
       if (ownerResult.success) {
         participantCount++;
+        console.log('[MTProto] 📊 Owner успешно добавлен, participantCount теперь:', participantCount);
+        
+        // #region agent log
+        try {
+          const logEntry = JSON.stringify({location:'mtproto-service/server.js:522',message:'Owner added successfully',data:{participantCount,wasOne:participantCount===1,wasTwo:participantCount===2},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'OWNER_ADDED'})+'\n';
+          fs.appendFileSync(logPath, logEntry);
+        } catch (e) {}
+        // #endregion
+        
         ownerInfo = await getUserInfo(owner_telegram_id);
         
         if (participantCount === 1) {
           // ✅ Первое сообщение - первый участник
+          console.log('[MTProto] ✅ Owner - ПЕРВЫЙ участник (participantCount === 1)');
           console.log('[MTProto] 📨 Отправляем ПЕРВОЕ сообщение (Owner - первый участник)...');
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
             `Сейчас ждем второго участника (арендатора).\n\n` +
@@ -522,22 +559,50 @@ app.post('/create-group', async (req, res) => {
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
-          await sendGroupMessage(firstMessage);
+          const firstMessageResult = await sendGroupMessage(firstMessage);
+          console.log('[MTProto] 📨 Результат отправки первого сообщения:', firstMessageResult);
         } else if (participantCount === 2) {
           // ✅ Второе сообщение - второй участник
+          console.log('[MTProto] ✅ Owner - ВТОРОЙ участник (participantCount === 2)');
           console.log('[MTProto] 📨 Отправляем ВТОРОЕ сообщение (Owner - второй участник)...');
           const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
             `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
             `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
             `Мы всегда на связи и готовы вам помочь! 🤝`;
           
-          await sendGroupMessage(secondMessage);
+          const secondMessageResult = await sendGroupMessage(secondMessage);
+          console.log('[MTProto] 📨 Результат отправки второго сообщения:', secondMessageResult);
           
-          // ✅ Через 2 секунды отправляем третье сообщение
-          console.log('[MTProto] ⏳ Запланировано третье сообщение через 2 секунды...');
-          thirdMessageTimeout = setTimeout(() => {
-            sendThirdMessage();
-          }, 2000);
+          if (secondMessageResult) {
+            // ✅ Через 2 секунды отправляем третье сообщение
+            console.log('[MTProto] ⏳ Ожидание 2 секунды перед отправкой третьего сообщения...');
+            
+            // #region agent log
+            const fs = require('fs');
+            const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
+            try {
+              const logEntry = JSON.stringify({location:'mtproto-service/server.js:577',message:'Before 2s delay for third message (Owner block)',data:{participantCount,thirdMessageSent},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_OWNER'})+'\n';
+              fs.appendFileSync(logPath, logEntry);
+            } catch (e) {}
+            // #endregion
+            
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('[MTProto] ⏳ 2 секунды прошли, вызываем sendThirdMessage()...');
+            
+            // #region agent log
+            try {
+              const logEntry = JSON.stringify({location:'mtproto-service/server.js:580',message:'Calling sendThirdMessage (Owner block)',data:{participantCount,thirdMessageSent},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CALL_THIRD_OWNER'})+'\n';
+              fs.appendFileSync(logPath, logEntry);
+            } catch (e) {}
+            // #endregion
+            
+            await sendThirdMessage();
+            console.log('[MTProto] ✅ sendThirdMessage() завершена');
+          } else {
+            console.error('[MTProto] ❌ Второе сообщение не отправлено, третье сообщение не будет отправлено');
+          }
+        } else {
+          console.warn('[MTProto] ⚠️ Неожиданное значение participantCount для Owner:', participantCount);
         }
       } else {
         console.log('[MTProto] ⚠️ Owner не был добавлен, причина:', ownerResult.error);
@@ -552,10 +617,20 @@ app.post('/create-group', async (req, res) => {
       
       if (renterResult.success) {
         participantCount++;
+        console.log('[MTProto] 📊 Renter успешно добавлен, participantCount теперь:', participantCount);
+        
+        // #region agent log
+        try {
+          const logEntry = JSON.stringify({location:'mtproto-service/server.js:575',message:'Renter added successfully',data:{participantCount,wasOne:participantCount===1,wasTwo:participantCount===2},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'RENTER_ADDED'})+'\n';
+          fs.appendFileSync(logPath, logEntry);
+        } catch (e) {}
+        // #endregion
+        
         renterInfo = await getUserInfo(renter_telegram_id);
         
         if (participantCount === 1) {
           // ✅ Первое сообщение - первый участник
+          console.log('[MTProto] ✅ Renter - ПЕРВЫЙ участник (participantCount === 1)');
           console.log('[MTProto] 📨 Отправляем ПЕРВОЕ сообщение (Renter - первый участник)...');
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
             `Сейчас ждем второго участника (арендодателя).\n\n` +
@@ -563,22 +638,50 @@ app.post('/create-group', async (req, res) => {
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
-          await sendGroupMessage(firstMessage);
+          const firstMessageResult = await sendGroupMessage(firstMessage);
+          console.log('[MTProto] 📨 Результат отправки первого сообщения:', firstMessageResult);
         } else if (participantCount === 2) {
           // ✅ Второе сообщение - второй участник
+          console.log('[MTProto] ✅ Renter - ВТОРОЙ участник (participantCount === 2)');
           console.log('[MTProto] 📨 Отправляем ВТОРОЕ сообщение (Renter - второй участник)...');
           const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
             `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
             `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
             `Мы всегда на связи и готовы вам помочь! 🤝`;
           
-          await sendGroupMessage(secondMessage);
+          const secondMessageResult = await sendGroupMessage(secondMessage);
+          console.log('[MTProto] 📨 Результат отправки второго сообщения:', secondMessageResult);
           
-          // ✅ Через 2 секунды отправляем третье сообщение
-          console.log('[MTProto] ⏳ Запланировано третье сообщение через 2 секунды...');
-          thirdMessageTimeout = setTimeout(() => {
-            sendThirdMessage();
-          }, 2000);
+          if (secondMessageResult) {
+            // ✅ Через 2 секунды отправляем третье сообщение
+            console.log('[MTProto] ⏳ Ожидание 2 секунды перед отправкой третьего сообщения...');
+            
+            // #region agent log
+            const fs = require('fs');
+            const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
+            try {
+              const logEntry = JSON.stringify({location:'mtproto-service/server.js:638',message:'Before 2s delay for third message (Renter block)',data:{participantCount,thirdMessageSent},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_RENTER'})+'\n';
+              fs.appendFileSync(logPath, logEntry);
+            } catch (e) {}
+            // #endregion
+            
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('[MTProto] ⏳ 2 секунды прошли, вызываем sendThirdMessage()...');
+            
+            // #region agent log
+            try {
+              const logEntry = JSON.stringify({location:'mtproto-service/server.js:641',message:'Calling sendThirdMessage (Renter block)',data:{participantCount,thirdMessageSent},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'CALL_THIRD_RENTER'})+'\n';
+              fs.appendFileSync(logPath, logEntry);
+            } catch (e) {}
+            // #endregion
+            
+            await sendThirdMessage();
+            console.log('[MTProto] ✅ sendThirdMessage() завершена');
+          } else {
+            console.error('[MTProto] ❌ Второе сообщение не отправлено, третье сообщение не будет отправлено');
+          }
+        } else {
+          console.warn('[MTProto] ⚠️ Неожиданное значение participantCount для Renter:', participantCount);
         }
       } else {
         console.log('[MTProto] ⚠️ Renter не был добавлен, причина:', renterResult.error);
