@@ -253,8 +253,9 @@ app.post('/create-group', async (req, res) => {
     
     // ✅ НОВОЕ: Включаем видимость истории чата для новых участников
     try {
-      await client.invoke(
-        new Api.messages.editChatDefaultBannedRights({
+      console.log('[MTProto] 🔧 Настраиваем видимость истории чата...');
+      const historyResult = await client.invoke(
+        new Api.messages.EditChatDefaultBannedRights({
           peer: chatPeer,
           bannedRights: new Api.ChatBannedRights({
             viewMessages: false, // разрешить просмотр истории сообщений
@@ -281,9 +282,10 @@ app.post('/create-group', async (req, res) => {
           })
         })
       );
-      console.log('[MTProto] ✅ История чата сделана видимой для новых участников');
+      console.log('[MTProto] ✅ История чата сделана видимой для новых участников, результат:', JSON.stringify(historyResult, null, 2));
     } catch (historyError) {
       console.warn('[MTProto] ⚠️ Не удалось настроить видимость истории чата:', historyError.message);
+      console.warn('[MTProto] ⚠️ Детали ошибки:', historyError);
     }
     
     // ✅ НОВОЕ: Функция для добавления пользователя в группу
@@ -293,7 +295,7 @@ app.post('/create-group', async (req, res) => {
         console.log(`[MTProto] 📥 Пытаемся добавить ${role} (userId: ${userIdNumber}) в группу...`);
         
         await client.invoke(
-          new Api.messages.addChatUser({
+          new Api.messages.AddChatUser({
             chatId: chatIdNumber,
             userId: new Api.InputUser({ userId: userIdNumber, accessHash: BigInt(0) }),
             fwdLimit: 50
