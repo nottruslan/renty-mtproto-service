@@ -707,6 +707,90 @@ app.post('/create-group', async (req, res) => {
       const firstMessageResult = await sendGroupMessage(firstMessage);
       console.log('[MTProto] 📨 Результат отправки первого сообщения:', firstMessageResult);
       
+      // ✅ НОВОЕ: Запускаем фоновую проверку на присоединение второго участника
+      // Проверяем каждые 3 секунды в течение 30 секунд
+      console.log('[MTProto] 🔄 Запускаем фоновую проверку на присоединение второго участника...');
+      const checkSecondParticipant = async () => {
+        const maxChecks = 10; // 10 проверок по 3 секунды = 30 секунд
+        const checkInterval = 3000; // 3 секунды
+        
+        for (let i = 0; i < maxChecks; i++) {
+          await new Promise(resolve => setTimeout(resolve, checkInterval));
+          
+          try {
+            console.log(`[MTProto] 🔍 Проверка ${i + 1}/${maxChecks}: проверяем состав группы...`);
+            const fullChat = await client.invoke(
+              new Api.messages.GetFullChat({
+                chatId: chatIdNumber
+              })
+            );
+            
+            let currentParticipantsCount = 0;
+            let currentOwnerInGroup = false;
+            let currentRenterInGroup = false;
+            
+            if (fullChat && fullChat.fullChat && fullChat.fullChat.participants) {
+              const participants = fullChat.fullChat.participants;
+              
+              if (participants.participants && Array.isArray(participants.participants)) {
+                const normalizedManagerId = String(manager_telegram_id);
+                const normalizedOwnerId = String(owner_telegram_id);
+                const normalizedRenterId = String(renter_telegram_id);
+                
+                for (const participant of participants.participants) {
+                  let userId = null;
+                  if (participant.userId) {
+                    if (typeof participant.userId === 'bigint') {
+                      userId = participant.userId.toString();
+                    } else if (typeof participant.userId === 'number') {
+                      userId = participant.userId.toString();
+                    } else {
+                      userId = String(participant.userId);
+                    }
+                  }
+                  
+                  if (userId && userId !== normalizedManagerId) {
+                    currentParticipantsCount++;
+                    if (userId === normalizedOwnerId) currentOwnerInGroup = true;
+                    if (userId === normalizedRenterId) currentRenterInGroup = true;
+                  }
+                }
+              }
+            }
+            
+            console.log(`[MTProto] 📊 Проверка ${i + 1}: участников = ${currentParticipantsCount}, owner=${currentOwnerInGroup}, renter=${currentRenterInGroup}`);
+            
+            // Если оба участника теперь в группе, отправляем второе и третье сообщения
+            if (currentParticipantsCount >= 2 && currentOwnerInGroup && currentRenterInGroup) {
+              console.log('[MTProto] ✅ Второй участник присоединился! Отправляем второе и третье сообщения...');
+              
+              const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
+                `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
+                `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
+                `Мы всегда на связи и готовы вам помочь! 🤝`;
+              
+              const secondMessageResult = await sendGroupMessage(secondMessage);
+              if (secondMessageResult) {
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await sendThirdMessage();
+                console.log('[MTProto] ✅ Второе и третье сообщения отправлены после присоединения второго участника');
+              }
+              
+              return; // Завершаем проверки
+            }
+          } catch (checkError) {
+            console.error(`[MTProto] ⚠️ Ошибка при проверке ${i + 1}:`, checkError.message);
+          }
+        }
+        
+        console.log('[MTProto] ⏰ Завершена фоновая проверка - второй участник не присоединился в течение 30 секунд');
+      };
+      
+      // Запускаем проверку асинхронно (не блокируем ответ)
+      checkSecondParticipant().catch(err => {
+        console.error('[MTProto] ❌ Ошибка в фоновой проверке:', err);
+      });
+      
     } else if (actualParticipantsCount === 2 && ownerInGroup && renterInGroup) {
       // Второе и третье сообщение - оба участника в группе (менеджер + owner + renter)
       console.log('[MTProto] ✅ В группе 2 участника (не считая менеджера): owner и renter, отправляем второе и третье сообщения...');
