@@ -469,7 +469,7 @@ app.post('/create-group', async (req, res) => {
         const fs = require('fs');
         const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
         try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:465',message:'sendThirdMessage called',data:{thirdMessageSent:thirdMessageSent,participantCount,hasChatPeer:!!chatPeer,hasOwnerInfo:!!ownerInfo,hasRenterInfo:!!renterInfo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_START'})+'\n';
+          const logEntry = JSON.stringify({location:'mtproto-service/server.js:465',message:'sendThirdMessage called',data:{thirdMessageSent:thirdMessageSent,hasChatPeer:!!chatPeer,hasOwnerInfo:!!ownerInfo,hasRenterInfo:!!renterInfo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_START'})+'\n';
           fs.appendFileSync(logPath, logEntry);
         } catch (e) {}
         // #endregion
@@ -710,12 +710,26 @@ app.post('/create-group', async (req, res) => {
       // ✅ НОВОЕ: Запускаем фоновую проверку на присоединение второго участника
       // Проверяем каждые 3 секунды в течение 30 секунд
       console.log('[MTProto] 🔄 Запускаем фоновую проверку на присоединение второго участника...');
+      console.log('[MTProto] 📊 Контекст для фоновой проверки:', {
+        chatIdNumber,
+        owner_telegram_id,
+        renter_telegram_id,
+        manager_telegram_id,
+        hasChatPeer: !!chatPeer,
+        ownerInGroup,
+        renterInGroup
+      });
+      
       const checkSecondParticipant = async () => {
+        console.log('[MTProto] 🔄 Фоновая проверка ЗАПУЩЕНА');
         const maxChecks = 10; // 10 проверок по 3 секунды = 30 секунд
         const checkInterval = 3000; // 3 секунды
         
         for (let i = 0; i < maxChecks; i++) {
-          await new Promise(resolve => setTimeout(resolve, checkInterval));
+          if (i > 0) {
+            // Ждем только перед последующими проверками, не перед первой
+            await new Promise(resolve => setTimeout(resolve, checkInterval));
+          }
           
           try {
             console.log(`[MTProto] 🔍 Проверка ${i + 1}/${maxChecks}: проверяем состав группы...`);
