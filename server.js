@@ -453,17 +453,33 @@ app.post('/create-group', async (req, res) => {
     let secondAdded = null;
     let ownerInfo = null;
     let renterInfo = null;
+    let secondParticipantMessagesSent = false; // ✅ НОВОЕ: Флаг для предотвращения повторной отправки
     
     // ✅ Функция для отправки сообщений после присоединения второго участника
     async function sendSecondParticipantMessages() {
       try {
+        // ✅ НОВОЕ: Проверяем, не были ли сообщения уже отправлены
+        if (secondParticipantMessagesSent) {
+          console.log('[MTProto] ⚠️ Сообщения для второго участника уже были отправлены, пропускаем...');
+          return;
+        }
+        
+        // ✅ НОВОЕ: Проверяем, что оба участника добавлены
+        if (!firstAdded || !secondAdded) {
+          console.log('[MTProto] ⚠️ Не все участники добавлены, firstAdded=', firstAdded, ', secondAdded=', secondAdded);
+          return;
+        }
+        
         console.log('[MTProto] 📤 Отправка сообщений для второго участника...');
         console.log('[MTProto] 📊 Текущее состояние: firstAdded=', firstAdded, ', secondAdded=', secondAdded);
         console.log('[MTProto] 📊 chatPeer:', chatPeer);
         
-        // ✅ НОВОЕ: Небольшая задержка, чтобы убедиться, что пользователь действительно добавлен в группу
-        console.log('[MTProto] ⏳ Ожидание 1 секунду перед отправкой сообщений...');
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // ✅ НОВОЕ: Устанавливаем флаг, чтобы предотвратить повторную отправку
+        secondParticipantMessagesSent = true;
+        
+        // ✅ НОВОЕ: Увеличиваем задержку до 2 секунд, чтобы убедиться, что пользователь действительно добавлен в группу
+        console.log('[MTProto] ⏳ Ожидание 2 секунды перед отправкой сообщений...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         // Получаем информацию о всех участниках
         if (!ownerInfo && owner_telegram_id) {
@@ -583,6 +599,7 @@ app.post('/create-group', async (req, res) => {
           ownerInfo = await getUserInfo(owner_telegram_id);
           
           // Отправляем сообщения для второго участника
+          // ✅ Функция сама проверит, что оба участника добавлены
           console.log('[MTProto] 🔔 Вызываем sendSecondParticipantMessages для Owner...');
           await sendSecondParticipantMessages();
         }
@@ -620,6 +637,7 @@ app.post('/create-group', async (req, res) => {
           renterInfo = await getUserInfo(renter_telegram_id);
           
           // Отправляем сообщения для второго участника
+          // ✅ Функция сама проверит, что оба участника добавлены
           console.log('[MTProto] 🔔 Вызываем sendSecondParticipantMessages для Renter...');
           await sendSecondParticipantMessages();
         }
