@@ -175,12 +175,15 @@ app.post('/create-group', async (req, res) => {
             })
           );
           
-          if (usersResult && usersResult.length > 0 && usersResult[0].id) {
+          if (usersResult && Array.isArray(usersResult) && usersResult.length > 0 && usersResult[0] && usersResult[0].id) {
             const user = usersResult[0];
+            console.log(`[MTProto] ✅ ${role} получен через users.getUsers`);
             return new Api.InputUser({ 
               userId: user.id, 
               accessHash: user.accessHash || BigInt(0) 
             });
+          } else {
+            console.log(`[MTProto] ⚠️ users.getUsers для ${role} вернул неожиданный результат:`, usersResult);
           }
         } catch (usersError) {
           console.error(`[MTProto] ❌ users.getUsers также не сработал для ${role}:`, usersError.message);
@@ -224,17 +227,29 @@ app.post('/create-group', async (req, res) => {
     console.log('[MTProto] 📋 Результат CreateChat:', {
       type: typeof result,
       className: result?.className,
-      hasChats: !!result?.chats,
-      chatsLength: result?.chats?.length,
-      result: JSON.stringify(result, null, 2)
+      hasUpdates: !!result?.updates,
+      hasChats: !!result?.updates?.chats,
+      chatsLength: result?.updates?.chats?.length
     });
     
-    if (!result || !result.chats || !Array.isArray(result.chats) || result.chats.length === 0) {
-      throw new Error(`CreateChat вернул неожиданный результат: ${JSON.stringify(result)}`);
+    // ✅ ИСПРАВЛЕНО: messages.InvitedUsers возвращает chats в result.updates.chats
+    let chatId;
+    if (result && result.updates && result.updates.chats && result.updates.chats.length > 0) {
+      chatId = result.updates.chats[0].id;
+      console.log(`[MTProto] ✅ Группа создана, chatId: ${chatId}`);
+    } else if (result && result.chats && result.chats.length > 0) {
+      // Fallback для другого формата ответа
+      chatId = result.chats[0].id;
+      console.log(`[MTProto] ✅ Группа создана (fallback), chatId: ${chatId}`);
+    } else {
+      throw new Error(`CreateChat вернул неожиданный результат, не удалось найти chatId. Структура: ${JSON.stringify(result, null, 2)}`);
     }
     
-    const chatId = result.chats[0].id;
-    console.log(`[MTProto] ✅ Группа создана: ${chatId}`);
+    // Преобразуем chatId в число (может быть BigInt или строка)
+    const chatIdNumber = typeof chatId === 'bigint' ? Number(chatId) : parseInt(chatId.toString());
+    
+    // Создаем InputPeerChat для использования в API вызовах
+    const chatPeer = new Api.InputPeerChat({ chatId: chatIdNumber });
     
     // Отправляем приветственное сообщение
     const botUsername = 'Renta_rent_bot';
@@ -249,25 +264,29 @@ app.post('/create-group', async (req, res) => {
       `🔗 <a href="${listingUrl}">Открыть объявление</a>`;
     
     try {
-      await client.sendMessage(chatId, {
+      // ✅ ИСПРАВЛЕНО: Используем chatPeer (InputPeerChat) вместо chatId
+      await client.sendMessage(chatPeer, {
         message: welcomeMessage,
         parseMode: 'html' // ✅ Используем HTML парсинг
       });
+      console.log('[MTProto] ✅ Приветственное сообщение отправлено');
     } catch (msgError) {
-      console.warn('⚠️ Не удалось отправить приветственное сообщение:', msgError.message);
+      console.warn('[MTProto] ⚠️ Не удалось отправить приветственное сообщение:', msgError.message);
     }
     
     // Получаем invite link
     let inviteLink;
     try {
+      // ✅ ИСПРАВЛЕНО: Используем chatPeer (InputPeerChat) вместо chatId
       const exportResult = await client.invoke(
         new Api.messages.ExportChatInvite({
-          peer: chatId
+          peer: chatPeer
         })
       );
       inviteLink = exportResult.link;
+      console.log('[MTProto] ✅ Invite link создан:', inviteLink);
     } catch (inviteError) {
-      console.warn('⚠️ Не удалось создать invite link:', inviteError.message);
+      console.warn('[MTProto] ⚠️ Не удалось создать invite link:', inviteError.message);
       // Продолжаем без invite link
     }
     
