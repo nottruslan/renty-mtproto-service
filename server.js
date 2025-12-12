@@ -445,81 +445,28 @@ app.post('/create-group', async (req, res) => {
       }
     }
     
-    // ✅ НОВОЕ: Добавляем участников в группу и отправляем сообщения по мере присоединения
+    // ✅ УПРОЩЕНО: Добавляем участников в группу и отправляем сообщения по мере присоединения
     const botUsername = 'Renta_rent_bot';
     const listingUrl = `https://t.me/${botUsername}?startapp=listing_${listing_id}`;
     
-    let firstAdded = null;
-    let secondAdded = null;
     let ownerInfo = null;
     let renterInfo = null;
-    let secondParticipantMessagesSent = false; // ✅ НОВОЕ: Флаг для предотвращения повторной отправки
+    let thirdMessageTimeout = null; // Для отмены третьего сообщения, если нужно
     
-    // ✅ Функция для отправки сообщений после присоединения второго участника
-    async function sendSecondParticipantMessages() {
+    // ✅ Функция для отправки третьего сообщения (общая информация об участниках)
+    async function sendThirdMessage() {
       try {
-        // ✅ НОВОЕ: Проверяем, не были ли сообщения уже отправлены
-        if (secondParticipantMessagesSent) {
-          console.log('[MTProto] ⚠️ Сообщения для второго участника уже были отправлены, пропускаем...');
-          return;
-        }
+        console.log('[MTProto] 📨 Отправка третьего сообщения с информацией об участниках...');
         
-        // ✅ НОВОЕ: Проверяем, что оба участника добавлены
-        if (!firstAdded || !secondAdded) {
-          console.log('[MTProto] ⚠️ Не все участники добавлены, firstAdded=', firstAdded, ', secondAdded=', secondAdded);
-          return;
-        }
-        
-        console.log('[MTProto] 📤 Отправка сообщений для второго участника...');
-        console.log('[MTProto] 📊 Текущее состояние: firstAdded=', firstAdded, ', secondAdded=', secondAdded);
-        console.log('[MTProto] 📊 chatPeer:', chatPeer);
-        
-        // ✅ НОВОЕ: Устанавливаем флаг, чтобы предотвратить повторную отправку
-        secondParticipantMessagesSent = true;
-        
-        // ✅ НОВОЕ: Увеличиваем задержку до 2 секунд, чтобы убедиться, что пользователь действительно добавлен в группу
-        console.log('[MTProto] ⏳ Ожидание 2 секунды перед отправкой сообщений...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Получаем информацию о всех участниках
+        // Получаем информацию о всех участниках, если еще не получили
         if (!ownerInfo && owner_telegram_id) {
-          console.log('[MTProto] 🔍 Получаем информацию о owner...');
           ownerInfo = await getUserInfo(owner_telegram_id);
-          console.log('[MTProto] ✅ Owner info:', ownerInfo);
         }
         if (!renterInfo && renter_telegram_id) {
-          console.log('[MTProto] 🔍 Получаем информацию о renter...');
           renterInfo = await getUserInfo(renter_telegram_id);
-          console.log('[MTProto] ✅ Renter info:', renterInfo);
         }
         
-        // ✅ Сообщение после присоединения второго участника
-        const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
-          `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
-          `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
-          `Мы всегда на связи и готовы вам помочь! 🤝`;
-        
-        console.log('[MTProto] 📨 Отправляем второе сообщение...');
-        const secondMessageResult = await sendGroupMessage(secondMessage);
-        console.log('[MTProto] 📨 Результат отправки второго сообщения:', secondMessageResult);
-        
-        if (!secondMessageResult) {
-          console.error('[MTProto] ❌ Не удалось отправить второе сообщение!');
-          // #region agent log
-          const fs = require('fs');
-          const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-          try {
-            const logEntry = JSON.stringify({location:'mtproto-service/server.js:435',message:'sendSecondParticipantMessages second message failed',data:{ownerInfo,renterInfo,chatPeer:chatPeer?.toString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'I'})+'\n';
-            fs.appendFileSync(logPath, logEntry);
-          } catch (e) {}
-          // #endregion
-          return; // Прекращаем выполнение, если первое сообщение не отправилось
-        }
-        
-        // ✅ Небольшая задержка между сообщениями
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // ✅ Третье сообщение с информацией об участниках
+        // Третье сообщение с информацией об участниках
         let participantsInfo = `👥 <b>Участники чата:</b>\n\n`;
         
         // Информация об арендодателе
@@ -543,32 +490,18 @@ app.post('/create-group', async (req, res) => {
         // Информация о менеджере
         participantsInfo += `👨‍💼 <b>Менеджер Renty:</b> Всегда на связи`;
         
-        console.log('[MTProto] 📨 Отправляем третье сообщение с информацией об участниках...');
-        const thirdMessageResult = await sendGroupMessage(participantsInfo);
-        console.log('[MTProto] 📨 Результат отправки третьего сообщения:', thirdMessageResult);
-        
-        // #region agent log
-        const fs = require('fs');
-        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-        try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:435',message:'sendSecondParticipantMessages completed',data:{ownerInfo,renterInfo,secondMessageResult,thirdMessageResult,chatPeer:chatPeer?.toString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'I'})+'\n';
-          fs.appendFileSync(logPath, logEntry);
-        } catch (e) {}
-        // #endregion
+        await sendGroupMessage(participantsInfo);
+        console.log('[MTProto] ✅ Третье сообщение отправлено');
       } catch (error) {
-        console.error('[MTProto] ❌ Ошибка в sendSecondParticipantMessages:', error.message);
-        console.error('[MTProto] ❌ Полная ошибка:', error);
-        
-        // #region agent log
-        const fs = require('fs');
-        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-        try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:435',message:'sendSecondParticipantMessages error',data:{error:error.message,errorStack:error.stack,chatPeer:chatPeer?.toString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'I'})+'\n';
-          fs.appendFileSync(logPath, logEntry);
-        } catch (e) {}
-        // #endregion
+        console.error('[MTProto] ❌ Ошибка при отправке третьего сообщения:', error.message);
       }
     }
+    
+    // ✅ УДАЛЕНО: Старая сложная функция sendSecondParticipantMessages
+    // Теперь используем простую логику с participantCount
+    
+    // ✅ УПРОЩЕНО: Добавляем участников по очереди и отправляем сообщения
+    let participantCount = 0;
     
     // Добавляем owner
     if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
@@ -577,31 +510,34 @@ app.post('/create-group', async (req, res) => {
       console.log('[MTProto] 📊 Результат добавления Owner:', ownerResult);
       
       if (ownerResult.success) {
-        if (!firstAdded) {
-          console.log('[MTProto] ✅ Owner добавляется ПЕРВЫМ участником');
-          firstAdded = { role: 'Owner', id: owner_telegram_id };
-          // Получаем информацию о первом участнике
-          ownerInfo = await getUserInfo(owner_telegram_id);
-          
-          // ✅ Сообщение после присоединения первого участника
+        participantCount++;
+        ownerInfo = await getUserInfo(owner_telegram_id);
+        
+        if (participantCount === 1) {
+          // ✅ Первое сообщение - первый участник
+          console.log('[MTProto] 📨 Отправляем ПЕРВОЕ сообщение (Owner - первый участник)...');
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
             `Сейчас ждем второго участника (арендатора).\n\n` +
             `Как только он присоединится, начнем обсуждение.\n\n` +
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
-          console.log('[MTProto] 📨 Отправляем сообщение первому участнику (Owner)...');
           await sendGroupMessage(firstMessage);
-        } else {
-          console.log('[MTProto] ✅ Owner добавляется ВТОРЫМ участником');
-          // Owner добавляется вторым
-          secondAdded = { role: 'Owner', id: owner_telegram_id };
-          ownerInfo = await getUserInfo(owner_telegram_id);
+        } else if (participantCount === 2) {
+          // ✅ Второе сообщение - второй участник
+          console.log('[MTProto] 📨 Отправляем ВТОРОЕ сообщение (Owner - второй участник)...');
+          const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
+            `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
+            `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
+            `Мы всегда на связи и готовы вам помочь! 🤝`;
           
-          // Отправляем сообщения для второго участника
-          // ✅ Функция сама проверит, что оба участника добавлены
-          console.log('[MTProto] 🔔 Вызываем sendSecondParticipantMessages для Owner...');
-          await sendSecondParticipantMessages();
+          await sendGroupMessage(secondMessage);
+          
+          // ✅ Через 2 секунды отправляем третье сообщение
+          console.log('[MTProto] ⏳ Запланировано третье сообщение через 2 секунды...');
+          thirdMessageTimeout = setTimeout(() => {
+            sendThirdMessage();
+          }, 2000);
         }
       } else {
         console.log('[MTProto] ⚠️ Owner не был добавлен, причина:', ownerResult.error);
@@ -615,31 +551,34 @@ app.post('/create-group', async (req, res) => {
       console.log('[MTProto] 📊 Результат добавления Renter:', renterResult);
       
       if (renterResult.success) {
-        if (!firstAdded) {
-          console.log('[MTProto] ✅ Renter добавляется ПЕРВЫМ участником');
-          firstAdded = { role: 'Renter', id: renter_telegram_id };
-          // Получаем информацию о первом участнике
-          renterInfo = await getUserInfo(renter_telegram_id);
-          
-          // ✅ Сообщение после присоединения первого участника
+        participantCount++;
+        renterInfo = await getUserInfo(renter_telegram_id);
+        
+        if (participantCount === 1) {
+          // ✅ Первое сообщение - первый участник
+          console.log('[MTProto] 📨 Отправляем ПЕРВОЕ сообщение (Renter - первый участник)...');
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
             `Сейчас ждем второго участника (арендодателя).\n\n` +
             `Как только он присоединится, начнем обсуждение.\n\n` +
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
-          console.log('[MTProto] 📨 Отправляем сообщение первому участнику (Renter)...');
           await sendGroupMessage(firstMessage);
-        } else {
-          console.log('[MTProto] ✅ Renter добавляется ВТОРЫМ участником');
-          // Renter добавляется вторым
-          secondAdded = { role: 'Renter', id: renter_telegram_id };
-          renterInfo = await getUserInfo(renter_telegram_id);
+        } else if (participantCount === 2) {
+          // ✅ Второе сообщение - второй участник
+          console.log('[MTProto] 📨 Отправляем ВТОРОЕ сообщение (Renter - второй участник)...');
+          const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
+            `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
+            `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
+            `Мы всегда на связи и готовы вам помочь! 🤝`;
           
-          // Отправляем сообщения для второго участника
-          // ✅ Функция сама проверит, что оба участника добавлены
-          console.log('[MTProto] 🔔 Вызываем sendSecondParticipantMessages для Renter...');
-          await sendSecondParticipantMessages();
+          await sendGroupMessage(secondMessage);
+          
+          // ✅ Через 2 секунды отправляем третье сообщение
+          console.log('[MTProto] ⏳ Запланировано третье сообщение через 2 секунды...');
+          thirdMessageTimeout = setTimeout(() => {
+            sendThirdMessage();
+          }, 2000);
         }
       } else {
         console.log('[MTProto] ⚠️ Renter не был добавлен, причина:', renterResult.error);
@@ -647,8 +586,7 @@ app.post('/create-group', async (req, res) => {
     }
     
     // Логируем результаты
-    const successfulAdds = (firstAdded ? 1 : 0) + (secondAdded ? 1 : 0);
-    console.log(`[MTProto] 📊 Результаты добавления участников: ${successfulAdds} успешно`);
+    console.log(`[MTProto] 📊 Результаты добавления участников: ${participantCount} успешно`);
     
     // Получаем invite link
     let inviteLink;
