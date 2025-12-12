@@ -571,18 +571,40 @@ app.post('/create-group', async (req, res) => {
       );
       
       console.log('[MTProto] 📋 Информация о чате получена');
+      console.log('[MTProto] 📋 Структура fullChat:', {
+        hasFullChat: !!fullChat?.fullChat,
+        fullChatClassName: fullChat?.fullChat?.className,
+        hasParticipants: !!fullChat?.fullChat?.participants,
+        participantsClassName: fullChat?.fullChat?.participants?.className
+      });
       
       // Проверяем участников чата
       if (fullChat && fullChat.fullChat && fullChat.fullChat.participants) {
         const participants = fullChat.fullChat.participants;
         console.log('[MTProto] 👥 Участники чата:', participants.className);
+        console.log('[MTProto] 👥 Структура participants:', {
+          className: participants.className,
+          hasParticipantsArray: !!participants.participants,
+          participantsIsArray: Array.isArray(participants.participants),
+          participantsLength: participants.participants?.length || 0
+        });
         
         if (participants.participants && Array.isArray(participants.participants)) {
           // Считаем участников (исключая менеджера)
+          console.log('[MTProto] 🔍 Проверяем каждого участника...');
           for (const participant of participants.participants) {
+            console.log('[MTProto] 🔍 Участник:', {
+              className: participant?.className,
+              hasUserId: !!participant?.userId,
+              userId: participant?.userId ? participant.userId.toString() : 'N/A',
+              userIdType: typeof participant?.userId
+            });
+            
             const userId = participant.userId ? participant.userId.toString() : null;
             if (userId && userId !== manager_telegram_id) {
               actualParticipantsCount++;
+              console.log('[MTProto] ✅ Участник добавлен в подсчет (не менеджер):', userId);
+              
               if (userId === owner_telegram_id) {
                 ownerInGroup = true;
                 console.log('[MTProto] ✅ Owner найден в группе');
@@ -591,15 +613,24 @@ app.post('/create-group', async (req, res) => {
                 renterInGroup = true;
                 console.log('[MTProto] ✅ Renter найден в группе');
               }
+            } else if (userId === manager_telegram_id) {
+              console.log('[MTProto] ⏭️ Пропускаем менеджера:', userId);
             }
           }
+        } else {
+          console.warn('[MTProto] ⚠️ participants.participants не является массивом:', typeof participants.participants);
         }
         
         console.log('[MTProto] 📊 Реальный состав группы:', {
           totalParticipants: actualParticipantsCount,
           ownerInGroup,
-          renterInGroup
+          renterInGroup,
+          manager_telegram_id,
+          owner_telegram_id,
+          renter_telegram_id
         });
+      } else {
+        console.warn('[MTProto] ⚠️ Не удалось получить участников из fullChat');
       }
     } catch (getFullChatError) {
       console.error('[MTProto] ⚠️ Ошибка при получении информации о чате:', getFullChatError.message);
@@ -623,6 +654,14 @@ app.post('/create-group', async (req, res) => {
     // actualParticipantsCount считает только owner и renter (менеджер исключен)
     // 1 участник = менеджер + один из участников (owner или renter) → первое сообщение
     // 2 участника = менеджер + owner + renter → второе и третье сообщения
+    console.log('[MTProto] 🎯 Принятие решения о сообщениях:', {
+      actualParticipantsCount,
+      ownerInGroup,
+      renterInGroup,
+      condition1: actualParticipantsCount === 1,
+      condition2: actualParticipantsCount === 2 && ownerInGroup && renterInGroup
+    });
+    
     if (actualParticipantsCount === 1) {
       // Первое сообщение - только один участник в группе (менеджер + owner ИЛИ менеджер + renter)
       console.log('[MTProto] ✅ В группе 1 участник (не считая менеджера), отправляем первое сообщение...');
