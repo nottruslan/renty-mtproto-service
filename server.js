@@ -253,48 +253,6 @@ app.post('/create-group', async (req, res) => {
     // Создаем InputPeerChat для использования в API вызовах
     const chatPeer = new Api.InputPeerChat({ chatId: chatIdNumber });
     
-    // ✅ НОВОЕ: Включаем видимость истории чата для новых участников
-    // Примечание: CHAT_NOT_MODIFIED означает что права уже настроены правильно, это нормально
-    try {
-      console.log('[MTProto] 🔧 Настраиваем видимость истории чата...');
-      const historyResult = await client.invoke(
-        new Api.messages.EditChatDefaultBannedRights({
-          peer: chatPeer,
-          bannedRights: new Api.ChatBannedRights({
-            viewMessages: false, // разрешить просмотр истории сообщений
-            sendMessages: false,
-            sendMedia: false,
-            sendStickers: false,
-            sendGifs: false,
-            sendGames: false,
-            sendInline: false,
-            embedLinks: false,
-            sendPolls: false,
-            changeInfo: false,
-            inviteUsers: false,
-            pinMessages: false,
-            manageTopics: false,
-            sendPhotos: false,
-            sendVideos: false,
-            sendRoundvideos: false,
-            sendAudios: false,
-            sendVoices: false,
-            sendDocs: false,
-            sendPlain: false,
-            untilDate: 0
-          })
-        })
-      );
-      console.log('[MTProto] ✅ История чата настроена, результат:', JSON.stringify(historyResult, null, 2));
-    } catch (historyError) {
-      // CHAT_NOT_MODIFIED - это нормально, означает что права уже такие
-      if (historyError.message && historyError.message.includes('CHAT_NOT_MODIFIED')) {
-        console.log('[MTProto] ℹ️ История чата уже настроена правильно (CHAT_NOT_MODIFIED)');
-      } else {
-        console.warn('[MTProto] ⚠️ Не удалось настроить видимость истории чата:', historyError.message);
-      }
-    }
-    
     // ✅ НОВОЕ: Пытаемся получить accessHash из результата CreateChat
     // Telegram возвращает информацию о пользователях в result.updates.users
     const usersFromCreateChat = result?.updates?.users || [];
@@ -384,7 +342,7 @@ app.post('/create-group', async (req, res) => {
         // Пытаемся получить accessHash различными способами
         const accessHash = await tryGetAccessHash(userId, role, username);
         
-        await client.invoke(
+        const addResult = await client.invoke(
           new Api.messages.AddChatUser({
             chatId: chatIdNumber,
             userId: new Api.InputUser({ userId: userIdNumber, accessHash: accessHash }),
@@ -392,60 +350,180 @@ app.post('/create-group', async (req, res) => {
           })
         );
         
+        // Проверяем результат добавления
+        // Если есть missingInvitees, значит некоторые пользователи не были добавлены
+        if (addResult && addResult.missingInvitees && addResult.missingInvitees.length > 0) {
+          const missingUserId = addResult.missingInvitees[0];
+          console.warn(`[MTProto] ⚠️ ${role} не был добавлен в группу (missingInvitees содержит userId: ${missingUserId})`);
+          console.warn(`[MTProto] ⚠️ Это может быть из-за настроек приватности пользователя`);
+          return { success: false, role, error: 'USER_NOT_ADDED', errorCode: 'MISSING_INVITEES', isPrivacyError: true };
+        }
+        
         console.log(`[MTProto] ✅ ${role} успешно добавлен в группу`);
         return { success: true, role };
       } catch (addError) {
         const errorMessage = addError.message || addError.errorMessage || 'Unknown error';
         const errorCode = addError.code || 'UNKNOWN';
-        console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу:`, errorMessage, `(код: ${errorCode})`);
         
-        // Логируем специфичные ошибки
-        if (errorMessage.includes('USER_PRIVACY_RESTRICTED') || errorMessage.includes('PRIVACY') || errorCode === 406) {
-          console.log(`[MTProto] ℹ️ ${role} запретил приглашения в группы - будет отправлена ссылка`);
+        // ✅ ИСПРАВЛЕНО: Правильно определяем ошибки приватности
+        const isPrivacyError = errorMessage.includes('USER_PRIVACY_RESTRICTED') || 
+                               errorMessage.includes('PRIVACY') || 
+                               errorCode === 406 ||
+                               errorMessage.includes('privacy') ||
+                               errorMessage.includes('PRIVACY_RESTRICTED');
+        
+        if (isPrivacyError) {
+          console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу: настройки приватности не позволяют приглашать в группы`);
+          console.log(`[MTProto] ℹ️ ${role} запретил приглашения в группы (код: ${errorCode}) - будет отправлена invite ссылка`);
+          return { success: false, role, error: 'USER_PRIVACY_RESTRICTED', errorCode, isPrivacyError: true };
         } else if (errorMessage.includes('USER_ID_INVALID') || errorCode === 400) {
+          console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу: USER_ID_INVALID (код: ${errorCode})`);
           console.log(`[MTProto] ℹ️ Не удалось добавить ${role} (USER_ID_INVALID) - вероятно нужен правильный accessHash. Будет отправлена ссылка`);
+          return { success: false, role, error: errorMessage, errorCode };
+        } else {
+          console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу:`, errorMessage, `(код: ${errorCode})`);
+          return { success: false, role, error: errorMessage, errorCode };
         }
-        
-        return { success: false, role, error: errorMessage, errorCode };
       }
     }
     
-    // ✅ НОВОЕ: Добавляем участников в группу
-    const addResults = [];
-    if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
-      addResults.push(await addUserToChat(owner_telegram_id, 'Owner', owner_telegram_username));
-    }
-    if (renter_telegram_id && renter_telegram_id !== manager_telegram_id) {
-      addResults.push(await addUserToChat(renter_telegram_id, 'Renter', renter_telegram_username));
+    // ✅ НОВОЕ: Функция для получения информации о пользователе
+    async function getUserInfo(userId) {
+      try {
+        const userIdNumber = parseInt(userId);
+        const inputPeer = await client.getInputEntity(userIdNumber);
+        const user = await client.getEntity(inputPeer);
+        
+        if (user && typeof user === 'object') {
+          const firstName = user.firstName || '';
+          const lastName = user.lastName || '';
+          const username = user.username ? `@${user.username}` : '';
+          const name = `${firstName} ${lastName}`.trim() || username || 'Пользователь';
+          
+          return { name, username, firstName, lastName };
+        }
+      } catch (error) {
+        console.warn(`[MTProto] ⚠️ Не удалось получить информацию о пользователе ${userId}:`, error.message);
+      }
+      return { name: 'Пользователь', username: '', firstName: '', lastName: '' };
     }
     
-    // Логируем результаты добавления
-    const successfulAdds = addResults.filter(r => r.success).length;
-    const failedAdds = addResults.filter(r => !r.success).length;
-    console.log(`[MTProto] 📊 Результаты добавления участников: ${successfulAdds} успешно, ${failedAdds} не удалось`);
+    // ✅ НОВОЕ: Функция для отправки сообщения в группу
+    async function sendGroupMessage(messageText) {
+      try {
+        await client.sendMessage(chatPeer, {
+          message: messageText,
+          parseMode: 'html'
+        });
+        return true;
+      } catch (error) {
+        console.warn('[MTProto] ⚠️ Не удалось отправить сообщение в группу:', error.message);
+        return false;
+      }
+    }
     
-    // Отправляем приветственное сообщение
+    // ✅ НОВОЕ: Добавляем участников в группу и отправляем сообщения по мере присоединения
     const botUsername = 'Renta_rent_bot';
     const listingUrl = `https://t.me/${botUsername}?startapp=listing_${listing_id}`;
-    // ✅ ИСПРАВЛЕНО: Используем HTML форматирование вместо Markdown (Telegram не поддерживает Markdown в обычных сообщениях)
-    const welcomeMessage = `👋 Добро пожаловать в групповой чат по объявлению!\n\n` +
-      `📋 <b>${listing_title || 'Объявление'}</b>\n\n` +
-      `Участники чата:\n` +
-      `• Арендодатель\n` +
-      `• Арендатор\n` +
-      `• Менеджер Renty\n\n` +
-      `🔗 <a href="${listingUrl}">Открыть объявление</a>`;
     
-    try {
-      // ✅ ИСПРАВЛЕНО: Используем chatPeer (InputPeerChat) вместо chatId
-      await client.sendMessage(chatPeer, {
-        message: welcomeMessage,
-        parseMode: 'html' // ✅ Используем HTML парсинг
-      });
-      console.log('[MTProto] ✅ Приветственное сообщение отправлено');
-    } catch (msgError) {
-      console.warn('[MTProto] ⚠️ Не удалось отправить приветственное сообщение:', msgError.message);
+    let firstAdded = null;
+    let secondAdded = null;
+    let ownerInfo = null;
+    let renterInfo = null;
+    
+    // Добавляем owner
+    if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
+      const ownerResult = await addUserToChat(owner_telegram_id, 'Owner', owner_telegram_username);
+      if (ownerResult.success) {
+        if (!firstAdded) {
+          firstAdded = { role: 'Owner', id: owner_telegram_id };
+          // Получаем информацию о первом участнике
+          ownerInfo = await getUserInfo(owner_telegram_id);
+          
+          // ✅ Сообщение после присоединения первого участника
+          const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
+            `Сейчас ждем второго участника ${firstAdded.role === 'Owner' ? '(арендатора)' : '(арендодателя)'}.\n\n` +
+            `Как только он присоединится, начнем обсуждение.\n\n` +
+            `А пока можете еще раз посмотреть объявление:\n` +
+            `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
+          
+          await sendGroupMessage(firstMessage);
+        } else {
+          secondAdded = { role: 'Owner', id: owner_telegram_id };
+          ownerInfo = await getUserInfo(owner_telegram_id);
+        }
+      }
     }
+    
+    // Добавляем renter
+    if (renter_telegram_id && renter_telegram_id !== manager_telegram_id) {
+      const renterResult = await addUserToChat(renter_telegram_id, 'Renter', renter_telegram_username);
+      if (renterResult.success) {
+        if (!firstAdded) {
+          firstAdded = { role: 'Renter', id: renter_telegram_id };
+          // Получаем информацию о первом участнике
+          renterInfo = await getUserInfo(renter_telegram_id);
+          
+          // ✅ Сообщение после присоединения первого участника
+          const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
+            `Сейчас ждем второго участника ${firstAdded.role === 'Owner' ? '(арендатора)' : '(арендодателя)'}.\n\n` +
+            `Как только он присоединится, начнем обсуждение.\n\n` +
+            `А пока можете еще раз посмотреть объявление:\n` +
+            `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
+          
+          await sendGroupMessage(firstMessage);
+        } else {
+          secondAdded = { role: 'Renter', id: renter_telegram_id };
+          renterInfo = await getUserInfo(renter_telegram_id);
+          
+          // ✅ Получаем информацию о втором участнике если еще не получили
+          if (!ownerInfo && firstAdded.role === 'Owner') {
+            ownerInfo = await getUserInfo(firstAdded.id);
+          }
+          if (!renterInfo && firstAdded.role === 'Renter') {
+            renterInfo = await getUserInfo(firstAdded.id);
+          }
+          
+          // ✅ Сообщение после присоединения второго участника
+          const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
+            `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
+            `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
+            `Мы всегда на связи и готовы вам помочь! 🤝`;
+          
+          await sendGroupMessage(secondMessage);
+          
+          // ✅ Третье сообщение с информацией об участниках
+          let participantsInfo = `👥 <b>Участники чата:</b>\n\n`;
+          
+          // Информация об арендодателе
+          if (ownerInfo) {
+            participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}`;
+            if (ownerInfo.username) {
+              participantsInfo += ` (${ownerInfo.username})`;
+            }
+            participantsInfo += `\n`;
+          }
+          
+          // Информация об арендаторе
+          if (renterInfo) {
+            participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}`;
+            if (renterInfo.username) {
+              participantsInfo += ` (${renterInfo.username})`;
+            }
+            participantsInfo += `\n`;
+          }
+          
+          // Информация о менеджере
+          participantsInfo += `👨‍💼 <b>Менеджер Renty:</b> Всегда на связи`;
+          
+          await sendGroupMessage(participantsInfo);
+        }
+      }
+    }
+    
+    // Логируем результаты
+    const successfulAdds = (firstAdded ? 1 : 0) + (secondAdded ? 1 : 0);
+    console.log(`[MTProto] 📊 Результаты добавления участников: ${successfulAdds} успешно`);
     
     // Получаем invite link
     let inviteLink;
