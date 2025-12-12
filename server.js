@@ -252,6 +252,7 @@ app.post('/create-group', async (req, res) => {
     const chatPeer = new Api.InputPeerChat({ chatId: chatIdNumber });
     
     // ✅ НОВОЕ: Включаем видимость истории чата для новых участников
+    // Примечание: CHAT_NOT_MODIFIED означает что права уже настроены правильно, это нормально
     try {
       console.log('[MTProto] 🔧 Настраиваем видимость истории чата...');
       const historyResult = await client.invoke(
@@ -282,10 +283,32 @@ app.post('/create-group', async (req, res) => {
           })
         })
       );
-      console.log('[MTProto] ✅ История чата сделана видимой для новых участников, результат:', JSON.stringify(historyResult, null, 2));
+      console.log('[MTProto] ✅ История чата настроена, результат:', JSON.stringify(historyResult, null, 2));
     } catch (historyError) {
-      console.warn('[MTProto] ⚠️ Не удалось настроить видимость истории чата:', historyError.message);
-      console.warn('[MTProto] ⚠️ Детали ошибки:', historyError);
+      // CHAT_NOT_MODIFIED - это нормально, означает что права уже такие
+      if (historyError.message && historyError.message.includes('CHAT_NOT_MODIFIED')) {
+        console.log('[MTProto] ℹ️ История чата уже настроена правильно (CHAT_NOT_MODIFIED)');
+      } else {
+        console.warn('[MTProto] ⚠️ Не удалось настроить видимость истории чата:', historyError.message);
+      }
+    }
+    
+    // ✅ НОВОЕ: Пытаемся получить accessHash из результата CreateChat
+    // Telegram возвращает информацию о пользователях в result.updates.users
+    const usersFromCreateChat = result?.updates?.users || [];
+    console.log('[MTProto] 🔍 Пользователи из CreateChat:', usersFromCreateChat.length, 'пользователей');
+    
+    // Создаем мапу userId -> User для быстрого доступа
+    const usersMap = new Map();
+    if (Array.isArray(usersFromCreateChat)) {
+      usersFromCreateChat.forEach(user => {
+        if (user && user.id) {
+          const userIdStr = typeof user.id === 'bigint' ? user.id.toString() : user.id.toString();
+          usersMap.set(userIdStr, user);
+          const accessHashStr = user.accessHash ? user.accessHash.toString() : 'N/A';
+          console.log(`[MTProto] 📋 Найден пользователь в CreateChat: userId=${userIdStr}, accessHash=${accessHashStr}`);
+        }
+      });
     }
     
     // ✅ НОВОЕ: Функция для добавления пользователя в группу
@@ -294,10 +317,20 @@ app.post('/create-group', async (req, res) => {
         const userIdNumber = parseInt(userId);
         console.log(`[MTProto] 📥 Пытаемся добавить ${role} (userId: ${userIdNumber}) в группу...`);
         
+        // Пытаемся получить accessHash из мапы пользователей из CreateChat
+        let accessHash = BigInt(0);
+        const userFromMap = usersMap.get(userId);
+        if (userFromMap && userFromMap.accessHash) {
+          accessHash = userFromMap.accessHash;
+          console.log(`[MTProto] ✅ Найден accessHash для ${role} из CreateChat: ${accessHash}`);
+        } else {
+          console.log(`[MTProto] ⚠️ accessHash для ${role} не найден в CreateChat, используем 0`);
+        }
+        
         await client.invoke(
           new Api.messages.AddChatUser({
             chatId: chatIdNumber,
-            userId: new Api.InputUser({ userId: userIdNumber, accessHash: BigInt(0) }),
+            userId: new Api.InputUser({ userId: userIdNumber, accessHash: accessHash }),
             fwdLimit: 50
           })
         );
@@ -306,14 +339,17 @@ app.post('/create-group', async (req, res) => {
         return { success: true, role };
       } catch (addError) {
         const errorMessage = addError.message || addError.errorMessage || 'Unknown error';
-        console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу:`, errorMessage);
+        const errorCode = addError.code || 'UNKNOWN';
+        console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу:`, errorMessage, `(код: ${errorCode})`);
         
         // Логируем специфичные ошибки
-        if (errorMessage.includes('USER_PRIVACY_RESTRICTED') || errorMessage.includes('PRIVACY')) {
+        if (errorMessage.includes('USER_PRIVACY_RESTRICTED') || errorMessage.includes('PRIVACY') || errorCode === 406) {
           console.log(`[MTProto] ℹ️ ${role} запретил приглашения в группы - будет отправлена ссылка`);
+        } else if (errorMessage.includes('USER_ID_INVALID') || errorCode === 400) {
+          console.log(`[MTProto] ℹ️ Не удалось добавить ${role} (USER_ID_INVALID) - вероятно нужен правильный accessHash. Будет отправлена ссылка`);
         }
         
-        return { success: false, role, error: errorMessage };
+        return { success: false, role, error: errorMessage, errorCode };
       }
     }
     
