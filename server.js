@@ -71,14 +71,16 @@ app.post('/create-group', async (req, res) => {
   try {
     console.log('[MTProto] 📥 Received request body:', JSON.stringify(req.body, null, 2));
     
-    const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title } = req.body;
+    const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title, owner_telegram_username, renter_telegram_username } = req.body;
     
     console.log('[MTProto] 🔍 Extracted parameters:', {
       listing_id: listing_id || 'MISSING',
       owner_telegram_id: owner_telegram_id || 'MISSING',
       renter_telegram_id: renter_telegram_id || 'MISSING',
       manager_telegram_id: manager_telegram_id || 'MISSING',
-      listing_title: listing_title || 'MISSING'
+      listing_title: listing_title || 'MISSING',
+      owner_telegram_username: owner_telegram_username || 'N/A',
+      renter_telegram_username: renter_telegram_username || 'N/A'
     });
     
     // #region agent log
@@ -311,21 +313,76 @@ app.post('/create-group', async (req, res) => {
       });
     }
     
+    // ✅ НОВОЕ: Функция для получения accessHash через contacts API
+    async function tryGetAccessHash(userId, role, username = null) {
+      const userIdNumber = parseInt(userId);
+      let accessHash = BigInt(0);
+      
+      // Сначала проверяем мапу из CreateChat
+      const userFromMap = usersMap.get(userId);
+      if (userFromMap && userFromMap.accessHash) {
+        accessHash = userFromMap.accessHash;
+        console.log(`[MTProto] ✅ Найден accessHash для ${role} из CreateChat: ${accessHash}`);
+        return accessHash;
+      }
+      
+      // ✅ НОВОЕ: Пытаемся получить через username (contacts.resolveUsername)
+      if (username) {
+        try {
+          // Убираем @ если есть
+          const cleanUsername = username.replace('@', '').trim();
+          console.log(`[MTProto] 🔍 Пытаемся получить accessHash для ${role} через username: @${cleanUsername}...`);
+          
+          const resolveResult = await client.invoke(
+            new Api.contacts.ResolveUsername({
+              username: cleanUsername
+            })
+          );
+          
+          if (resolveResult && resolveResult.users && resolveResult.users.length > 0) {
+            const user = resolveResult.users[0];
+            if (user && user.id && user.id.toString() === userId && user.accessHash) {
+              accessHash = user.accessHash;
+              console.log(`[MTProto] ✅ Найден accessHash для ${role} через username: ${accessHash}`);
+              return accessHash;
+            }
+          }
+          console.log(`[MTProto] ⚠️ ${role} не найден через username @${cleanUsername}`);
+        } catch (usernameError) {
+          console.log(`[MTProto] ⚠️ Не удалось получить ${role} через username:`, usernameError.message);
+        }
+      }
+      
+      // Пытаемся получить через contacts.getContacts
+      try {
+        console.log(`[MTProto] 🔍 Пытаемся получить accessHash для ${role} через contacts.getContacts...`);
+        const contactsResult = await client.invoke(new Api.contacts.GetContacts({ hash: BigInt(0) }));
+        
+        if (contactsResult && contactsResult.users && Array.isArray(contactsResult.users)) {
+          const userInContacts = contactsResult.users.find(u => u && u.id && u.id.toString() === userId);
+          if (userInContacts && userInContacts.accessHash) {
+            accessHash = userInContacts.accessHash;
+            console.log(`[MTProto] ✅ Найден accessHash для ${role} в контактах: ${accessHash}`);
+            return accessHash;
+          }
+        }
+        console.log(`[MTProto] ⚠️ ${role} не найден в контактах`);
+      } catch (contactsError) {
+        console.log(`[MTProto] ⚠️ Не удалось получить контакты для ${role}:`, contactsError.message);
+      }
+      
+      console.log(`[MTProto] ⚠️ accessHash для ${role} не найден, используем 0`);
+      return accessHash;
+    }
+    
     // ✅ НОВОЕ: Функция для добавления пользователя в группу
-    async function addUserToChat(userId, role) {
+    async function addUserToChat(userId, role, username = null) {
       try {
         const userIdNumber = parseInt(userId);
-        console.log(`[MTProto] 📥 Пытаемся добавить ${role} (userId: ${userIdNumber}) в группу...`);
+        console.log(`[MTProto] 📥 Пытаемся добавить ${role} (userId: ${userIdNumber}${username ? `, username: @${username.replace('@', '')}` : ''}) в группу...`);
         
-        // Пытаемся получить accessHash из мапы пользователей из CreateChat
-        let accessHash = BigInt(0);
-        const userFromMap = usersMap.get(userId);
-        if (userFromMap && userFromMap.accessHash) {
-          accessHash = userFromMap.accessHash;
-          console.log(`[MTProto] ✅ Найден accessHash для ${role} из CreateChat: ${accessHash}`);
-        } else {
-          console.log(`[MTProto] ⚠️ accessHash для ${role} не найден в CreateChat, используем 0`);
-        }
+        // Пытаемся получить accessHash различными способами
+        const accessHash = await tryGetAccessHash(userId, role, username);
         
         await client.invoke(
           new Api.messages.AddChatUser({
@@ -356,10 +413,10 @@ app.post('/create-group', async (req, res) => {
     // ✅ НОВОЕ: Добавляем участников в группу
     const addResults = [];
     if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
-      addResults.push(await addUserToChat(owner_telegram_id, 'Owner'));
+      addResults.push(await addUserToChat(owner_telegram_id, 'Owner', owner_telegram_username));
     }
     if (renter_telegram_id && renter_telegram_id !== manager_telegram_id) {
-      addResults.push(await addUserToChat(renter_telegram_id, 'Renter'));
+      addResults.push(await addUserToChat(renter_telegram_id, 'Renter', renter_telegram_username));
     }
     
     // Логируем результаты добавления
