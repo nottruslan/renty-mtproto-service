@@ -69,20 +69,42 @@ async function initClient() {
 // Эндпоинт для создания группы
 app.post('/create-group', async (req, res) => {
   try {
+    console.log('[MTProto] 📥 Received request body:', JSON.stringify(req.body, null, 2));
+    
     const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title } = req.body;
+    
+    console.log('[MTProto] 🔍 Extracted parameters:', {
+      listing_id: listing_id || 'MISSING',
+      owner_telegram_id: owner_telegram_id || 'MISSING',
+      renter_telegram_id: renter_telegram_id || 'MISSING',
+      manager_telegram_id: manager_telegram_id || 'MISSING',
+      listing_title: listing_title || 'MISSING'
+    });
     
     // #region agent log
     const fs = require('fs');
     const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-    const logEntry = JSON.stringify({location:'mtproto-service/server.js:72',message:'MTProto received request body',data:{listing_id,owner_telegram_id,renter_telegram_id,manager_telegram_id,listing_title,rawBody:req.body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})+'\n';
-    fs.appendFileSync(logPath, logEntry);
+    try {
+      const logEntry = JSON.stringify({location:'mtproto-service/server.js:72',message:'MTProto received request body',data:{listing_id,owner_telegram_id,renter_telegram_id,manager_telegram_id,listing_title,rawBody:req.body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})+'\n';
+      fs.appendFileSync(logPath, logEntry);
+    } catch (e) {}
     // #endregion
     
     if (!listing_id || !owner_telegram_id || !renter_telegram_id || !manager_telegram_id) {
+      console.error('[MTProto] ❌ Missing required parameters:', {
+        hasListingId: !!listing_id,
+        hasOwnerTelegramId: !!owner_telegram_id,
+        hasRenterTelegramId: !!renter_telegram_id,
+        hasManagerTelegramId: !!manager_telegram_id
+      });
+      
       // #region agent log
-      const logEntry2 = JSON.stringify({location:'mtproto-service/server.js:75',message:'MTProto missing parameters',data:{hasListingId:!!listing_id,hasOwnerTelegramId:!!owner_telegram_id,hasRenterTelegramId:!!renter_telegram_id,hasManagerTelegramId:!!manager_telegram_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})+'\n';
-      fs.appendFileSync(logPath, logEntry2);
+      try {
+        const logEntry2 = JSON.stringify({location:'mtproto-service/server.js:89',message:'MTProto missing parameters',data:{hasListingId:!!listing_id,hasOwnerTelegramId:!!owner_telegram_id,hasRenterTelegramId:!!renter_telegram_id,hasManagerTelegramId:!!manager_telegram_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})+'\n';
+        fs.appendFileSync(logPath, logEntry2);
+      } catch (e) {}
       // #endregion
+      
       return res.status(400).json({ 
         error: 'Missing required parameters: listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id' 
       });
