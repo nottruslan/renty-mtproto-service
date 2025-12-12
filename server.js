@@ -251,6 +251,84 @@ app.post('/create-group', async (req, res) => {
     // Создаем InputPeerChat для использования в API вызовах
     const chatPeer = new Api.InputPeerChat({ chatId: chatIdNumber });
     
+    // ✅ НОВОЕ: Включаем видимость истории чата для новых участников
+    try {
+      await client.invoke(
+        new Api.messages.editChatDefaultBannedRights({
+          peer: chatPeer,
+          bannedRights: new Api.ChatBannedRights({
+            viewMessages: false, // разрешить просмотр истории сообщений
+            sendMessages: false,
+            sendMedia: false,
+            sendStickers: false,
+            sendGifs: false,
+            sendGames: false,
+            sendInline: false,
+            embedLinks: false,
+            sendPolls: false,
+            changeInfo: false,
+            inviteUsers: false,
+            pinMessages: false,
+            manageTopics: false,
+            sendPhotos: false,
+            sendVideos: false,
+            sendRoundvideos: false,
+            sendAudios: false,
+            sendVoices: false,
+            sendDocs: false,
+            sendPlain: false,
+            untilDate: 0
+          })
+        })
+      );
+      console.log('[MTProto] ✅ История чата сделана видимой для новых участников');
+    } catch (historyError) {
+      console.warn('[MTProto] ⚠️ Не удалось настроить видимость истории чата:', historyError.message);
+    }
+    
+    // ✅ НОВОЕ: Функция для добавления пользователя в группу
+    async function addUserToChat(userId, role) {
+      try {
+        const userIdNumber = parseInt(userId);
+        console.log(`[MTProto] 📥 Пытаемся добавить ${role} (userId: ${userIdNumber}) в группу...`);
+        
+        await client.invoke(
+          new Api.messages.addChatUser({
+            chatId: chatIdNumber,
+            userId: new Api.InputUser({ userId: userIdNumber, accessHash: BigInt(0) }),
+            fwdLimit: 50
+          })
+        );
+        
+        console.log(`[MTProto] ✅ ${role} успешно добавлен в группу`);
+        return { success: true, role };
+      } catch (addError) {
+        const errorMessage = addError.message || addError.errorMessage || 'Unknown error';
+        console.warn(`[MTProto] ⚠️ Не удалось добавить ${role} в группу:`, errorMessage);
+        
+        // Логируем специфичные ошибки
+        if (errorMessage.includes('USER_PRIVACY_RESTRICTED') || errorMessage.includes('PRIVACY')) {
+          console.log(`[MTProto] ℹ️ ${role} запретил приглашения в группы - будет отправлена ссылка`);
+        }
+        
+        return { success: false, role, error: errorMessage };
+      }
+    }
+    
+    // ✅ НОВОЕ: Добавляем участников в группу
+    const addResults = [];
+    if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
+      addResults.push(await addUserToChat(owner_telegram_id, 'Owner'));
+    }
+    if (renter_telegram_id && renter_telegram_id !== manager_telegram_id) {
+      addResults.push(await addUserToChat(renter_telegram_id, 'Renter'));
+    }
+    
+    // Логируем результаты добавления
+    const successfulAdds = addResults.filter(r => r.success).length;
+    const failedAdds = addResults.filter(r => !r.success).length;
+    console.log(`[MTProto] 📊 Результаты добавления участников: ${successfulAdds} успешно, ${failedAdds} не удалось`);
+    
     // Отправляем приветственное сообщение
     const botUsername = 'Renta_rent_bot';
     const listingUrl = `https://t.me/${botUsername}?startapp=listing_${listing_id}`;
