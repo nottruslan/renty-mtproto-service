@@ -431,6 +431,51 @@ app.post('/create-group', async (req, res) => {
     let ownerInfo = null;
     let renterInfo = null;
     
+    // ✅ Функция для отправки сообщений после присоединения второго участника
+    async function sendSecondParticipantMessages() {
+      // Получаем информацию о всех участниках
+      if (!ownerInfo && owner_telegram_id) {
+        ownerInfo = await getUserInfo(owner_telegram_id);
+      }
+      if (!renterInfo && renter_telegram_id) {
+        renterInfo = await getUserInfo(renter_telegram_id);
+      }
+      
+      // ✅ Сообщение после присоединения второго участника
+      const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
+        `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
+        `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
+        `Мы всегда на связи и готовы вам помочь! 🤝`;
+      
+      await sendGroupMessage(secondMessage);
+      
+      // ✅ Третье сообщение с информацией об участниках
+      let participantsInfo = `👥 <b>Участники чата:</b>\n\n`;
+      
+      // Информация об арендодателе
+      if (ownerInfo) {
+        participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}`;
+        if (ownerInfo.username) {
+          participantsInfo += ` (${ownerInfo.username})`;
+        }
+        participantsInfo += `\n`;
+      }
+      
+      // Информация об арендаторе
+      if (renterInfo) {
+        participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}`;
+        if (renterInfo.username) {
+          participantsInfo += ` (${renterInfo.username})`;
+        }
+        participantsInfo += `\n`;
+      }
+      
+      // Информация о менеджере
+      participantsInfo += `👨‍💼 <b>Менеджер Renty:</b> Всегда на связи`;
+      
+      await sendGroupMessage(participantsInfo);
+    }
+    
     // Добавляем owner
     if (owner_telegram_id && owner_telegram_id !== manager_telegram_id) {
       const ownerResult = await addUserToChat(owner_telegram_id, 'Owner', owner_telegram_username);
@@ -442,15 +487,19 @@ app.post('/create-group', async (req, res) => {
           
           // ✅ Сообщение после присоединения первого участника
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
-            `Сейчас ждем второго участника ${firstAdded.role === 'Owner' ? '(арендатора)' : '(арендодателя)'}.\n\n` +
+            `Сейчас ждем второго участника (арендатора).\n\n` +
             `Как только он присоединится, начнем обсуждение.\n\n` +
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
           await sendGroupMessage(firstMessage);
         } else {
+          // Owner добавляется вторым
           secondAdded = { role: 'Owner', id: owner_telegram_id };
           ownerInfo = await getUserInfo(owner_telegram_id);
+          
+          // Отправляем сообщения для второго участника
+          await sendSecondParticipantMessages();
         }
       }
     }
@@ -466,57 +515,19 @@ app.post('/create-group', async (req, res) => {
           
           // ✅ Сообщение после присоединения первого участника
           const firstMessage = `🙏 Спасибо, что выбрали Renty!\n\n` +
-            `Сейчас ждем второго участника ${firstAdded.role === 'Owner' ? '(арендатора)' : '(арендодателя)'}.\n\n` +
+            `Сейчас ждем второго участника (арендодателя).\n\n` +
             `Как только он присоединится, начнем обсуждение.\n\n` +
             `А пока можете еще раз посмотреть объявление:\n` +
             `🔗 <a href="${listingUrl}">Посмотреть объявление</a>`;
           
           await sendGroupMessage(firstMessage);
         } else {
+          // Renter добавляется вторым
           secondAdded = { role: 'Renter', id: renter_telegram_id };
           renterInfo = await getUserInfo(renter_telegram_id);
           
-          // ✅ Получаем информацию о втором участнике если еще не получили
-          if (!ownerInfo && firstAdded.role === 'Owner') {
-            ownerInfo = await getUserInfo(firstAdded.id);
-          }
-          if (!renterInfo && firstAdded.role === 'Renter') {
-            renterInfo = await getUserInfo(firstAdded.id);
-          }
-          
-          // ✅ Сообщение после присоединения второго участника
-          const secondMessage = `✅ Все в сборе! Можете начинать обсуждение.\n\n` +
-            `Задавайте друг другу вопросы, обсуждайте детали аренды.\n\n` +
-            `Мы будем следить за диалогом, чтобы все было прозрачно и честно.\n\n` +
-            `Мы всегда на связи и готовы вам помочь! 🤝`;
-          
-          await sendGroupMessage(secondMessage);
-          
-          // ✅ Третье сообщение с информацией об участниках
-          let participantsInfo = `👥 <b>Участники чата:</b>\n\n`;
-          
-          // Информация об арендодателе
-          if (ownerInfo) {
-            participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}`;
-            if (ownerInfo.username) {
-              participantsInfo += ` (${ownerInfo.username})`;
-            }
-            participantsInfo += `\n`;
-          }
-          
-          // Информация об арендаторе
-          if (renterInfo) {
-            participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}`;
-            if (renterInfo.username) {
-              participantsInfo += ` (${renterInfo.username})`;
-            }
-            participantsInfo += `\n`;
-          }
-          
-          // Информация о менеджере
-          participantsInfo += `👨‍💼 <b>Менеджер Renty:</b> Всегда на связи`;
-          
-          await sendGroupMessage(participantsInfo);
+          // Отправляем сообщения для второго участника
+          await sendSecondParticipantMessages();
         }
       }
     }
