@@ -150,15 +150,44 @@ app.post('/create-group', async (req, res) => {
             userId: inputPeer.userId, 
             accessHash: inputPeer.accessHash 
           });
+        } else if (inputPeer instanceof Api.InputPeerSelf) {
+          // Если это сам менеджер (self), получаем информацию о себе
+          console.log(`[MTProto] ℹ️ ${role} является self, получаем информацию о себе...`);
+          const me = await client.getMe();
+          return new Api.InputUser({ 
+            userId: me.id, 
+            accessHash: me.accessHash || BigInt(0) 
+          });
         } else {
           throw new Error(`${role} entity не является пользователем (className: ${inputPeer.className})`);
         }
       } catch (error) {
         console.error(`[MTProto] ❌ Ошибка получения ${role} entity:`, error.message);
-        // Если getInputEntity не работает, пытаемся использовать числовой ID напрямую
-        // (но это может не сработать если нет accessHash)
+        // Если getInputEntity не работает, нужно получить accessHash через users.getUsers
         const userId = parseInt(telegramId);
-        console.log(`[MTProto] ⚠️ Пробуем использовать InputUser напрямую для ${role} с userId=${userId}`);
+        console.log(`[MTProto] ⚠️ Пробуем использовать users.getUsers для ${role} с userId=${userId}`);
+        
+        try {
+          // Пытаемся получить accessHash через users.getUsers
+          const usersResult = await client.invoke(
+            new Api.users.GetUsers({
+              id: [new Api.InputUser({ userId: userId, accessHash: BigInt(0) })]
+            })
+          );
+          
+          if (usersResult && usersResult.length > 0 && usersResult[0].id) {
+            const user = usersResult[0];
+            return new Api.InputUser({ 
+              userId: user.id, 
+              accessHash: user.accessHash || BigInt(0) 
+            });
+          }
+        } catch (usersError) {
+          console.error(`[MTProto] ❌ users.getUsers также не сработал для ${role}:`, usersError.message);
+        }
+        
+        // Последний fallback - используем userId напрямую (может не сработать)
+        console.log(`[MTProto] ⚠️ Используем InputUser с accessHash=0 для ${role} (последний fallback)`);
         return new Api.InputUser({ userId: userId, accessHash: BigInt(0) });
       }
     }
@@ -179,9 +208,12 @@ app.post('/create-group', async (req, res) => {
     
     console.log('[MTProto] 📤 Создание группы с участниками:', {
       title: groupTitle,
-      participants: [ownerUserId, renterUserId, managerUserId]
+      ownerInput: { userId: ownerInput.userId.toString(), accessHash: ownerInput.accessHash.toString() },
+      renterInput: { userId: renterInput.userId.toString(), accessHash: renterInput.accessHash.toString() },
+      managerInput: { userId: managerInput.userId.toString(), accessHash: managerInput.accessHash.toString() }
     });
     
+    console.log('[MTProto] 📤 Вызов messages.CreateChat...');
     const result = await client.invoke(
       new Api.messages.CreateChat({
         users: [ownerInput, renterInput, managerInput],
@@ -189,8 +221,20 @@ app.post('/create-group', async (req, res) => {
       })
     );
     
+    console.log('[MTProto] 📋 Результат CreateChat:', {
+      type: typeof result,
+      className: result?.className,
+      hasChats: !!result?.chats,
+      chatsLength: result?.chats?.length,
+      result: JSON.stringify(result, null, 2)
+    });
+    
+    if (!result || !result.chats || !Array.isArray(result.chats) || result.chats.length === 0) {
+      throw new Error(`CreateChat вернул неожиданный результат: ${JSON.stringify(result)}`);
+    }
+    
     const chatId = result.chats[0].id;
-    console.log(`✅ Группа создана: ${chatId}`);
+    console.log(`[MTProto] ✅ Группа создана: ${chatId}`);
     
     // Отправляем приветственное сообщение
     const botUsername = 'Renta_rent_bot';
