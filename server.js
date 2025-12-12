@@ -131,58 +131,47 @@ app.post('/create-group', async (req, res) => {
       manager: managerUserId
     });
     
-    // ✅ ИСПРАВЛЕНО: Используем users.getUsers для получения полной информации о пользователях
-    // Это работает даже если пользователи не в контактах
+    // ✅ ИСПРАВЛЕНО: Используем getInputEntity, который более надежен для получения InputUser
+    // getInputEntity возвращает InputPeer, который можно преобразовать в InputUser для CreateChat
     let ownerInput, renterInput, managerInput;
     
-    try {
-      // Сначала пытаемся получить через users.getUsers с accessHash = 0
-      // Telegram вернет правильный accessHash для известных пользователей
-      const userIds = [
-        new Api.InputUser({ userId: parseInt(owner_telegram_id), accessHash: BigInt(0) }),
-        new Api.InputUser({ userId: parseInt(renter_telegram_id), accessHash: BigInt(0) }),
-        new Api.InputUser({ userId: parseInt(manager_telegram_id), accessHash: BigInt(0) })
-      ];
-      
-      console.log('[MTProto] 📋 Запрашиваем информацию о пользователях через users.getUsers...');
-      
-      const usersResult = await client.invoke(
-        new Api.users.GetUsers({
-          id: userIds
-        })
-      );
-      
-      console.log('[MTProto] ✅ Информация о пользователях получена:', usersResult.length, 'пользователей');
-      
-      // usersResult содержит массив User объектов, из которых создаем InputUser
-      ownerInput = new Api.InputUser({ 
-        userId: usersResult[0].id, 
-        accessHash: usersResult[0].accessHash || BigInt(0) 
-      });
-      renterInput = new Api.InputUser({ 
-        userId: usersResult[1].id, 
-        accessHash: usersResult[1].accessHash || BigInt(0) 
-      });
-      managerInput = new Api.InputUser({ 
-        userId: usersResult[2].id, 
-        accessHash: usersResult[2].accessHash || BigInt(0) 
-      });
-      
-      console.log('[MTProto] ✅ InputUser объекты созданы для всех участников');
-      
-    } catch (usersError) {
-      console.error('[MTProto] ❌ Ошибка получения информации о пользователях через users.getUsers:', usersError.message);
-      // Fallback: пытаемся использовать getEntity (может работать если пользователи в кэше)
-      console.log('[MTProto] ⚠️ Используем fallback метод getEntity...');
+    async function getUserInputForChat(telegramId, role) {
       try {
-        ownerInput = await client.getEntity(owner_telegram_id);
-        renterInput = await client.getEntity(renter_telegram_id);
-        managerInput = await client.getEntity(manager_telegram_id);
-        console.log('[MTProto] ✅ Entity получены через getEntity (fallback)');
-      } catch (fallbackError) {
-        console.error('[MTProto] ❌ Fallback метод также не сработал:', fallbackError.message);
-        throw new Error(`Не удалось получить информацию о пользователях. Проверьте, что все участники (owner, renter, manager) доступны в Telegram и их ID корректны. Ошибка: ${usersError.message}`);
+        // getInputEntity возвращает InputPeer, который содержит userId и accessHash
+        const inputPeer = await client.getInputEntity(telegramId);
+        console.log(`[MTProto] ✅ ${role} InputPeer получен:`, {
+          className: inputPeer.className,
+          userId: inputPeer.userId ? inputPeer.userId.toString() : 'N/A'
+        });
+        
+        if (inputPeer instanceof Api.InputPeerUser) {
+          // Преобразуем InputPeerUser в InputUser для CreateChat
+          return new Api.InputUser({ 
+            userId: inputPeer.userId, 
+            accessHash: inputPeer.accessHash 
+          });
+        } else {
+          throw new Error(`${role} entity не является пользователем (className: ${inputPeer.className})`);
+        }
+      } catch (error) {
+        console.error(`[MTProto] ❌ Ошибка получения ${role} entity:`, error.message);
+        // Если getInputEntity не работает, пытаемся использовать числовой ID напрямую
+        // (но это может не сработать если нет accessHash)
+        const userId = parseInt(telegramId);
+        console.log(`[MTProto] ⚠️ Пробуем использовать InputUser напрямую для ${role} с userId=${userId}`);
+        return new Api.InputUser({ userId: userId, accessHash: BigInt(0) });
       }
+    }
+    
+    try {
+      ownerInput = await getUserInputForChat(owner_telegram_id, 'Owner');
+      renterInput = await getUserInputForChat(renter_telegram_id, 'Renter');
+      managerInput = await getUserInputForChat(manager_telegram_id, 'Manager');
+      
+      console.log('[MTProto] ✅ Все InputUser объекты получены для создания группы');
+    } catch (error) {
+      console.error('[MTProto] ❌ Критическая ошибка при получении InputUser:', error.message);
+      throw new Error(`Не удалось получить информацию о пользователях: ${error.message}`);
     }
     
     // Создаем группу через messages.createChat
