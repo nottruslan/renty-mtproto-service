@@ -118,22 +118,84 @@ app.post('/create-group', async (req, res) => {
     
     console.log(`📦 Создание группы для listing ${listing_id}...`);
     
-    // Получаем entities участников
-    let ownerEntity, renterEntity, managerEntity;
+    // ✅ ИСПРАВЛЕНО: Используем getInputEntity, который работает даже с неизвестными пользователями
+    // getEntity требует, чтобы пользователь был в контактах или кэше
+    // Преобразуем строковые ID в числа
+    const ownerUserId = parseInt(owner_telegram_id);
+    const renterUserId = parseInt(renter_telegram_id);
+    const managerUserId = parseInt(manager_telegram_id);
+    
+    console.log('[MTProto] 🔍 User IDs:', {
+      owner: ownerUserId,
+      renter: renterUserId,
+      manager: managerUserId
+    });
+    
+    // ✅ ИСПРАВЛЕНО: Используем users.getUsers для получения полной информации о пользователях
+    // Это работает даже если пользователи не в контактах
+    let ownerInput, renterInput, managerInput;
+    
     try {
-      ownerEntity = await client.getEntity(owner_telegram_id);
-      renterEntity = await client.getEntity(renter_telegram_id);
-      managerEntity = await client.getEntity(manager_telegram_id);
-    } catch (entityError) {
-      throw new Error(`Не удалось получить информацию об участниках: ${entityError.message}`);
+      // Сначала пытаемся получить через users.getUsers с accessHash = 0
+      // Telegram вернет правильный accessHash для известных пользователей
+      const userIds = [
+        new Api.InputUser({ userId: parseInt(owner_telegram_id), accessHash: BigInt(0) }),
+        new Api.InputUser({ userId: parseInt(renter_telegram_id), accessHash: BigInt(0) }),
+        new Api.InputUser({ userId: parseInt(manager_telegram_id), accessHash: BigInt(0) })
+      ];
+      
+      console.log('[MTProto] 📋 Запрашиваем информацию о пользователях через users.getUsers...');
+      
+      const usersResult = await client.invoke(
+        new Api.users.GetUsers({
+          id: userIds
+        })
+      );
+      
+      console.log('[MTProto] ✅ Информация о пользователях получена:', usersResult.length, 'пользователей');
+      
+      // usersResult содержит массив User объектов, из которых создаем InputUser
+      ownerInput = new Api.InputUser({ 
+        userId: usersResult[0].id, 
+        accessHash: usersResult[0].accessHash || BigInt(0) 
+      });
+      renterInput = new Api.InputUser({ 
+        userId: usersResult[1].id, 
+        accessHash: usersResult[1].accessHash || BigInt(0) 
+      });
+      managerInput = new Api.InputUser({ 
+        userId: usersResult[2].id, 
+        accessHash: usersResult[2].accessHash || BigInt(0) 
+      });
+      
+      console.log('[MTProto] ✅ InputUser объекты созданы для всех участников');
+      
+    } catch (usersError) {
+      console.error('[MTProto] ❌ Ошибка получения информации о пользователях через users.getUsers:', usersError.message);
+      // Fallback: пытаемся использовать getEntity (может работать если пользователи в кэше)
+      console.log('[MTProto] ⚠️ Используем fallback метод getEntity...');
+      try {
+        ownerInput = await client.getEntity(owner_telegram_id);
+        renterInput = await client.getEntity(renter_telegram_id);
+        managerInput = await client.getEntity(manager_telegram_id);
+        console.log('[MTProto] ✅ Entity получены через getEntity (fallback)');
+      } catch (fallbackError) {
+        console.error('[MTProto] ❌ Fallback метод также не сработал:', fallbackError.message);
+        throw new Error(`Не удалось получить информацию о пользователях. Проверьте, что все участники (owner, renter, manager) доступны в Telegram и их ID корректны. Ошибка: ${usersError.message}`);
+      }
     }
     
     // Создаем группу через messages.createChat
     const groupTitle = `Чат #${listing_id.substring(0, 8)}`;
     
+    console.log('[MTProto] 📤 Создание группы с участниками:', {
+      title: groupTitle,
+      participants: [ownerUserId, renterUserId, managerUserId]
+    });
+    
     const result = await client.invoke(
       new Api.messages.CreateChat({
-        users: [ownerEntity, renterEntity, managerEntity],
+        users: [ownerInput, renterInput, managerInput],
         title: groupTitle
       })
     );
