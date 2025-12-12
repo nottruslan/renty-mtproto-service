@@ -557,6 +557,10 @@ app.post('/create-group', async (req, res) => {
     }
     
     // ✅ КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Проверяем реальный состав группы после всех попыток добавления
+    // Небольшая задержка, чтобы Telegram успел обновить информацию о группе
+    console.log('[MTProto] ⏳ Ожидание 1 секунду перед проверкой состава группы...');
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
     console.log('[MTProto] 🔍 Проверяем реальный состав группы...');
     let actualParticipantsCount = 0;
     let ownerInGroup = false;
@@ -593,28 +597,50 @@ app.post('/create-group', async (req, res) => {
           // Считаем участников (исключая менеджера)
           console.log('[MTProto] 🔍 Проверяем каждого участника...');
           for (const participant of participants.participants) {
+            // ✅ ИСПРАВЛЕНО: Нормализуем userId к строке для корректного сравнения
+            let userId = null;
+            if (participant.userId) {
+              // userId может быть BigInt, Number или String
+              if (typeof participant.userId === 'bigint') {
+                userId = participant.userId.toString();
+              } else if (typeof participant.userId === 'number') {
+                userId = participant.userId.toString();
+              } else {
+                userId = String(participant.userId);
+              }
+            }
+            
             console.log('[MTProto] 🔍 Участник:', {
               className: participant?.className,
               hasUserId: !!participant?.userId,
-              userId: participant?.userId ? participant.userId.toString() : 'N/A',
-              userIdType: typeof participant?.userId
+              userId: userId || 'N/A',
+              userIdType: typeof participant?.userId,
+              manager_telegram_id,
+              owner_telegram_id,
+              renter_telegram_id
             });
             
-            const userId = participant.userId ? participant.userId.toString() : null;
-            if (userId && userId !== manager_telegram_id) {
+            // ✅ ИСПРАВЛЕНО: Нормализуем все ID к строкам для сравнения
+            const normalizedManagerId = String(manager_telegram_id);
+            const normalizedOwnerId = String(owner_telegram_id);
+            const normalizedRenterId = String(renter_telegram_id);
+            
+            if (userId && userId !== normalizedManagerId) {
               actualParticipantsCount++;
               console.log('[MTProto] ✅ Участник добавлен в подсчет (не менеджер):', userId);
               
-              if (userId === owner_telegram_id) {
+              if (userId === normalizedOwnerId) {
                 ownerInGroup = true;
                 console.log('[MTProto] ✅ Owner найден в группе');
               }
-              if (userId === renter_telegram_id) {
+              if (userId === normalizedRenterId) {
                 renterInGroup = true;
                 console.log('[MTProto] ✅ Renter найден в группе');
               }
-            } else if (userId === manager_telegram_id) {
+            } else if (userId === normalizedManagerId) {
               console.log('[MTProto] ⏭️ Пропускаем менеджера:', userId);
+            } else {
+              console.log('[MTProto] ⚠️ Участник без userId или с неожиданным форматом');
             }
           }
         } else {
