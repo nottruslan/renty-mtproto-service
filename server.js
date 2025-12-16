@@ -71,7 +71,7 @@ app.post('/create-group', async (req, res) => {
   try {
     console.log('[MTProto] 📥 Received request body:', JSON.stringify(req.body, null, 2));
     
-    const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title, owner_telegram_username, renter_telegram_username } = req.body;
+    const { listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id, listing_title, owner_telegram_username, renter_telegram_username, owner_id, renter_id } = req.body;
     
     console.log('[MTProto] 🔍 Extracted parameters:', {
       listing_id: listing_id || 'MISSING',
@@ -80,17 +80,10 @@ app.post('/create-group', async (req, res) => {
       manager_telegram_id: manager_telegram_id || 'MISSING',
       listing_title: listing_title || 'MISSING',
       owner_telegram_username: owner_telegram_username || 'N/A',
-      renter_telegram_username: renter_telegram_username || 'N/A'
+      renter_telegram_username: renter_telegram_username || 'N/A',
+      owner_id: owner_id || 'MISSING',
+      renter_id: renter_id || 'MISSING'
     });
-    
-    // #region agent log
-    const fs = require('fs');
-    const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-    try {
-      const logEntry = JSON.stringify({location:'mtproto-service/server.js:72',message:'MTProto received request body',data:{listing_id,owner_telegram_id,renter_telegram_id,manager_telegram_id,listing_title,rawBody:req.body},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'G'})+'\n';
-      fs.appendFileSync(logPath, logEntry);
-    } catch (e) {}
-    // #endregion
     
     if (!listing_id || !owner_telegram_id || !renter_telegram_id || !manager_telegram_id) {
       console.error('[MTProto] ❌ Missing required parameters:', {
@@ -99,13 +92,6 @@ app.post('/create-group', async (req, res) => {
         hasRenterTelegramId: !!renter_telegram_id,
         hasManagerTelegramId: !!manager_telegram_id
       });
-      
-      // #region agent log
-      try {
-        const logEntry2 = JSON.stringify({location:'mtproto-service/server.js:89',message:'MTProto missing parameters',data:{hasListingId:!!listing_id,hasOwnerTelegramId:!!owner_telegram_id,hasRenterTelegramId:!!renter_telegram_id,hasManagerTelegramId:!!manager_telegram_id},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H'})+'\n';
-        fs.appendFileSync(logPath, logEntry2);
-      } catch (e) {}
-      // #endregion
       
       return res.status(400).json({ 
         error: 'Missing required parameters: listing_id, owner_telegram_id, renter_telegram_id, manager_telegram_id' 
@@ -418,28 +404,10 @@ app.post('/create-group', async (req, res) => {
         });
         console.log('[MTProto] ✅ Сообщение успешно отправлено, result:', result);
         
-        // #region agent log
-        const fs = require('fs');
-        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-        try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:412',message:'sendGroupMessage success',data:{messageText:messageText.substring(0,100),chatPeer:chatPeer?.toString(),hasResult:!!result},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'})+'\n';
-          fs.appendFileSync(logPath, logEntry);
-        } catch (e) {}
-        // #endregion
-        
         return true;
       } catch (error) {
         console.error('[MTProto] ❌ Ошибка при отправке сообщения в группу:', error.message);
         console.error('[MTProto] ❌ Полная ошибка:', error);
-        
-        // #region agent log
-        const fs = require('fs');
-        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-        try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:412',message:'sendGroupMessage error',data:{error:error.message,errorCode:error.code,chatPeer:chatPeer?.toString()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'J'})+'\n';
-          fs.appendFileSync(logPath, logEntry);
-        } catch (e) {}
-        // #endregion
         
         return false;
       }
@@ -465,15 +433,6 @@ app.post('/create-group', async (req, res) => {
         console.log('[MTProto] 📨 Отправка третьего сообщения с информацией об участниках...');
         console.log('[MTProto] 📊 Проверка переменных: chatPeer=', !!chatPeer, ', ownerInfo=', !!ownerInfo, ', renterInfo=', !!renterInfo);
         
-        // #region agent log
-        const fs = require('fs');
-        const logPath = '/Users/ru/Downloads/renta-miniapp ver 2.0 — копия 5 изменени раздел редактировать профиль  — тест 1/.cursor/debug.log';
-        try {
-          const logEntry = JSON.stringify({location:'mtproto-service/server.js:465',message:'sendThirdMessage called',data:{thirdMessageSent:thirdMessageSent,hasChatPeer:!!chatPeer,hasOwnerInfo:!!ownerInfo,hasRenterInfo:!!renterInfo},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'THIRD_MSG_START'})+'\n';
-          fs.appendFileSync(logPath, logEntry);
-        } catch (e) {}
-        // #endregion
-        
         thirdMessageSent = true; // Устанавливаем флаг до отправки, чтобы предотвратить повторную отправку
         
         // Получаем информацию о всех участниках, если еще не получили
@@ -484,29 +443,24 @@ app.post('/create-group', async (req, res) => {
           renterInfo = await getUserInfo(renter_telegram_id);
         }
         
-        // Третье сообщение с информацией об участниках
-        let participantsInfo = `👥 <b>Участники чата:</b>\n\n`;
+        // ✅ НОВОЕ: Третье сообщение с информацией об участниках и ссылками
+        let participantsInfo = ``;
         
         // Информация об арендодателе
-        if (ownerInfo) {
-          participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}`;
-          if (ownerInfo.username) {
-            participantsInfo += ` (${ownerInfo.username})`;
-          }
-          participantsInfo += `\n`;
+        if (ownerInfo && owner_id) {
+          participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}\n`;
+          const listingLink = `https://renta-miniapp.netlify.app/#listing=${listing_id}`;
+          const ownerProfileLink = `https://renta-miniapp.netlify.app/#profile=${owner_id}`;
+          participantsInfo += `🔗 Посмотреть объявление: <a href="${listingLink}">ссылка</a>\n`;
+          participantsInfo += `🔗 Посмотреть отзывы об арендодателе: <a href="${ownerProfileLink}">ссылка</a>\n\n`;
         }
         
         // Информация об арендаторе
-        if (renterInfo) {
-          participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}`;
-          if (renterInfo.username) {
-            participantsInfo += ` (${renterInfo.username})`;
-          }
-          participantsInfo += `\n`;
+        if (renterInfo && renter_id) {
+          participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}\n`;
+          const renterProfileLink = `https://renta-miniapp.netlify.app/#profile=${renter_id}`;
+          participantsInfo += `🔗 Посмотреть отзывы об арендаторе: <a href="${renterProfileLink}">ссылка</a>\n`;
         }
-        
-        // Информация о менеджере
-        participantsInfo += `👨‍💼 <b>Менеджер Renty:</b> Всегда на связи`;
         
         await sendGroupMessage(participantsInfo);
         console.log('[MTProto] ✅ Третье сообщение отправлено');
