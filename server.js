@@ -444,13 +444,15 @@ app.post('/create-group', async (req, res) => {
         }
         
         // ✅ НОВОЕ: Третье сообщение с информацией об участниках и ссылками
+        // ✅ ИСПРАВЛЕНО: Используем формат Telegram Mini App для открытия в боте
         let participantsInfo = ``;
+        const botUsername = 'Renta_rent_bot';
         
         // Информация об арендодателе
         if (ownerInfo && owner_id) {
           participantsInfo += `🏠 <b>Арендодатель:</b> ${ownerInfo.name}\n`;
-          const listingLink = `https://renta-miniapp.netlify.app/#listing=${listing_id}`;
-          const ownerProfileLink = `https://renta-miniapp.netlify.app/#profile=${owner_id}`;
+          const listingLink = `https://t.me/${botUsername}?startapp=listing_${listing_id}`;
+          const ownerProfileLink = `https://t.me/${botUsername}?startapp=profile_${owner_id}`;
           participantsInfo += `🔗 Посмотреть объявление: <a href="${listingLink}">ссылка</a>\n`;
           participantsInfo += `🔗 Посмотреть отзывы об арендодателе: <a href="${ownerProfileLink}">ссылка</a>\n\n`;
         }
@@ -458,7 +460,7 @@ app.post('/create-group', async (req, res) => {
         // Информация об арендаторе
         if (renterInfo && renter_id) {
           participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}\n`;
-          const renterProfileLink = `https://renta-miniapp.netlify.app/#profile=${renter_id}`;
+          const renterProfileLink = `https://t.me/${botUsername}?startapp=profile_${renter_id}`;
           participantsInfo += `🔗 Посмотреть отзывы об арендаторе: <a href="${renterProfileLink}">ссылка</a>\n`;
         }
         
