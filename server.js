@@ -421,6 +421,231 @@ app.post('/create-group', async (req, res) => {
     let renterInfo = null;
     let thirdMessageSent = false; // ✅ Защита от повторной отправки третьего сообщения
     
+    // ✅ Функция для загрузки профиля из Supabase
+    async function getProfileFromSupabase(userId) {
+      try {
+        const SUPABASE_URL = process.env.SUPABASE_URL;
+        const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        
+        if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+          console.warn('[MTProto] ⚠️ Supabase credentials not configured, skipping profile load');
+          return null;
+        }
+        
+        const response = await fetch(`${SUPABASE_URL}/rest/v1/profiles?user_id=eq.${userId}&select=*`, {
+          method: 'GET',
+          headers: {
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (!response.ok) {
+          console.warn('[MTProto] ⚠️ Failed to load profile from Supabase:', response.status);
+          return null;
+        }
+        
+        const data = await response.json();
+        return data && data.length > 0 ? data[0] : null;
+      } catch (error) {
+        console.warn('[MTProto] ⚠️ Error loading profile from Supabase:', error.message);
+        return null;
+      }
+    }
+    
+    // ✅ Функция для форматирования информации профиля
+    function formatProfileInfo(profile) {
+      if (!profile) return '';
+      
+      let info = '';
+      
+      // Тип пользователя
+      if (profile.user_type) {
+        const userTypeLabels = {
+          'landlord': '🏠 Сдаю квартиру',
+          'tenant': '🔍 Ищу квартиру'
+        };
+        info += `${userTypeLabels[profile.user_type] || profile.user_type}\n`;
+      }
+      
+      // С кем живет
+      if (profile.living_with) {
+        const livingLabels = {
+          'alone': 'Один/одна',
+          'family': 'С семьей',
+          'partner': 'С партнером',
+          'roommates': 'С соседями',
+          'children': 'С детьми'
+        };
+        info += `👥 С кем живет: ${livingLabels[profile.living_with] || profile.living_with}\n`;
+        if (profile.living_with_details) {
+          info += `   ${profile.living_with_details.substring(0, 80)}${profile.living_with_details.length > 80 ? '...' : ''}\n`;
+        }
+      }
+      
+      // Вредные привычки
+      const habits = [];
+      if (profile.smoking_behavior) {
+        const smokingLabels = {
+          'none': '🚬 Не курю',
+          'outside': '🚬 Курю на улице',
+          'inside': '🚬 Курю дома'
+        };
+        habits.push(smokingLabels[profile.smoking_behavior] || `🚬 ${profile.smoking_behavior}`);
+      } else if (profile.smoking) habits.push('🚬 Курит');
+      if (profile.drinking) {
+        const drinkingLabels = {
+          'never': '🍷 Алкоголь: никогда',
+          'rarely': '🍷 Алкоголь: редко',
+          'sometimes': '🍷 Алкоголь: иногда',
+          'often': '🍷 Алкоголь: часто'
+        };
+        habits.push(drinkingLabels[profile.drinking] || `🍷 Алкоголь: ${profile.drinking}`);
+      }
+      if (profile.pets && profile.pets !== 'none') {
+        const petsLabels = {
+          'cats': '🐱 Коты',
+          'dogs': '🐶 Собаки',
+          'other': '🐾 Другие животные',
+          'multiple': '🐾 Несколько животных'
+        };
+        habits.push(petsLabels[profile.pets] || `🐾 ${profile.pets}`);
+        if (profile.pets_details) {
+          habits[habits.length - 1] += `: ${profile.pets_details.substring(0, 50)}${profile.pets_details.length > 50 ? '...' : ''}`;
+        }
+      }
+      if (habits.length > 0) {
+        info += `\n${habits.join('\n')}\n`;
+      }
+      
+      // Опыт аренды
+      if (profile.rental_experience) {
+        const experienceLabels = {
+          'none': 'Нет опыта',
+          'less_than_year': 'Меньше года',
+          '1_3_years': '1-3 года',
+          '3_5_years': '3-5 лет',
+          'more_than_5_years': 'Более 5 лет'
+        };
+        info += `\n📋 Опыт аренды: ${experienceLabels[profile.rental_experience] || profile.rental_experience}\n`;
+        if (profile.rental_references) {
+          info += `📝 Рекомендации: ${profile.rental_references.substring(0, 80)}${profile.rental_references.length > 80 ? '...' : ''}\n`;
+        }
+      }
+      
+      // Финансовые условия
+      if (profile.employment_status) {
+        const employmentLabels = {
+          'employed': '💼 Работает по найму',
+          'self_employed': '💼 Самозанятый',
+          'student': '🎓 Студент',
+          'unemployed': '💼 Безработный',
+          'retired': '👴 Пенсионер'
+        };
+        info += `\n💼 Занятость: ${employmentLabels[profile.employment_status] || profile.employment_status}\n`;
+        if (profile.employment_details) {
+          info += `   ${profile.employment_details.substring(0, 80)}${profile.employment_details.length > 80 ? '...' : ''}\n`;
+        }
+      }
+      
+      // ✅ РОЛЬ 1: Сдает (Арендодатель) - требования к арендатору
+      if (profile.user_type === 'landlord') {
+        const tenantInfo = [];
+        if (profile.landlord_prefers_age) {
+          tenantInfo.push(`Возраст арендатора: ${profile.landlord_prefers_age}`);
+        }
+        if (profile.landlord_prefers_living_composition && Array.isArray(profile.landlord_prefers_living_composition) && profile.landlord_prefers_living_composition.length > 0) {
+          tenantInfo.push(`Состав жильцов: ${profile.landlord_prefers_living_composition.join(', ')}`);
+        }
+        if (profile.landlord_prefers_smoking) {
+          const labels = { 'none': '🚫 Нельзя', 'outside': '🚬 На улице', 'inside': '✅ Можно' };
+          tenantInfo.push(`Курение: ${labels[profile.landlord_prefers_smoking] || profile.landlord_prefers_smoking}`);
+          if (profile.landlord_prefers_smoking === 'inside' && profile.landlord_prefers_smoking_details) {
+            tenantInfo.push(`  Детали: ${profile.landlord_prefers_smoking_details}`);
+          }
+        }
+        if (profile.landlord_prefers_pets) {
+          const labels = { 'none': '❌ Нет', 'allowed': '✅ Да' };
+          tenantInfo.push(`Животные: ${labels[profile.landlord_prefers_pets] || profile.landlord_prefers_pets}`);
+          if (profile.landlord_prefers_pets === 'allowed' && profile.landlord_prefers_pets_details) {
+            tenantInfo.push(`  Детали: ${profile.landlord_prefers_pets_details}`);
+          }
+        }
+        if (profile.landlord_prefers_children) {
+          const labels = { 'none': '❌ Нет', 'allowed': '✅ Да' };
+          tenantInfo.push(`Дети: ${labels[profile.landlord_prefers_children] || profile.landlord_prefers_children}`);
+          if (profile.landlord_prefers_children === 'allowed' && profile.landlord_prefers_children_age) {
+            tenantInfo.push(`  Возраст: ${profile.landlord_prefers_children_age}`);
+          }
+        }
+        if (profile.landlord_prefers_guests) {
+          const labels = { 'allowed': '✅ Можно', 'not_welcome': '🚫 Не желательно', 'sometimes': '⚠️ Ограниченно' };
+          tenantInfo.push(`Гости: ${labels[profile.landlord_prefers_guests] || profile.landlord_prefers_guests}`);
+        }
+        if (profile.landlord_prefers_rental_duration) {
+          const labels = {
+            'less_than_3_months': 'Меньше трех месяцев',
+            '3_6_months': 'От 3 до 6 месяцев',
+            '6_12_months': 'От 6 до года',
+            '12_24_months': 'От года до двух',
+            '2_plus_years': 'Больше 2+'
+          };
+          tenantInfo.push(`Срок аренды: ${labels[profile.landlord_prefers_rental_duration] || profile.landlord_prefers_rental_duration}`);
+        }
+        if (profile.landlord_ideal_tenant) {
+          tenantInfo.push(`Идеальный арендатор: ${profile.landlord_ideal_tenant.substring(0, 100)}${profile.landlord_ideal_tenant.length > 100 ? '...' : ''}`);
+        }
+        if (tenantInfo.length > 0) {
+          info += `\n\n🏠 Требования к арендатору:\n${tenantInfo.join('\n')}\n`;
+        }
+      }
+      
+      // ✅ РОЛЬ 2: Снимает (Арендатор) - информация о себе
+      if (profile.user_type === 'tenant') {
+        const tenantInfo = [];
+        if (profile.tenant_age) {
+          tenantInfo.push(`Возраст: ${profile.tenant_age} лет`);
+        }
+        if (profile.tenant_living_with) {
+          tenantInfo.push(`С кем будете проживать: ${profile.tenant_living_with}`);
+        }
+        if (profile.tenant_smoking !== undefined) {
+          tenantInfo.push(`Курите: ${profile.tenant_smoking ? '✅ Да' : '❌ Нет'}`);
+        }
+        if (profile.tenant_has_children !== undefined) {
+          tenantInfo.push(`Есть дети: ${profile.tenant_has_children ? '✅ Да' : '❌ Нет'}`);
+        }
+        if (profile.tenant_employment) {
+          tenantInfo.push(`Работа / доход: ${profile.tenant_employment.substring(0, 80)}${profile.tenant_employment.length > 80 ? '...' : ''}`);
+        }
+        if (profile.tenant_previous_landlord_feedback) {
+          tenantInfo.push(`Отзыв предыдущего арендодателя: ${profile.tenant_previous_landlord_feedback.substring(0, 100)}${profile.tenant_previous_landlord_feedback.length > 100 ? '...' : ''}`);
+        }
+        if (profile.tenant_guests_frequency) {
+          tenantInfo.push(`Частота гостей: ${profile.tenant_guests_frequency}`);
+        }
+        if (profile.tenant_rental_duration) {
+          const labels = {
+            'less_than_3_months': 'Меньше трех месяцев',
+            '3_6_months': 'От 3 до 6 месяцев',
+            '6_12_months': 'От 6 до года',
+            '12_24_months': 'От года до двух',
+            '2_plus_years': 'Больше 2+'
+          };
+          tenantInfo.push(`Срок аренды: ${labels[profile.tenant_rental_duration] || profile.tenant_rental_duration}`);
+        }
+        if (profile.tenant_social_links && Array.isArray(profile.tenant_social_links) && profile.tenant_social_links.length > 0) {
+          tenantInfo.push(`Соцсети: ${profile.tenant_social_links.filter(l => l).join(', ')}`);
+        }
+        if (tenantInfo.length > 0) {
+          info += `\n\n🔍 О себе:\n${tenantInfo.join('\n')}\n`;
+        }
+      }
+      
+      return info.trim();
+    }
+    
     // ✅ Функция для отправки третьего сообщения (общая информация об участниках)
     async function sendThirdMessage() {
       // ✅ Защита от повторной отправки
@@ -443,6 +668,18 @@ app.post('/create-group', async (req, res) => {
           renterInfo = await getUserInfo(renter_telegram_id);
         }
         
+        // ✅ НОВОЕ: Загружаем полные профили из Supabase для актуальной информации
+        let ownerProfile = null;
+        let renterProfile = null;
+        if (owner_id) {
+          ownerProfile = await getProfileFromSupabase(owner_id);
+          console.log('[MTProto] ✅ Loaded owner profile from Supabase:', ownerProfile ? 'found' : 'not found');
+        }
+        if (renter_id) {
+          renterProfile = await getProfileFromSupabase(renter_id);
+          console.log('[MTProto] ✅ Loaded renter profile from Supabase:', renterProfile ? 'found' : 'not found');
+        }
+        
         // ✅ НОВОЕ: Третье сообщение с информацией об участниках и ссылками
         // ✅ ИСПРАВЛЕНО: Используем формат Telegram Mini App для открытия в боте
         let participantsInfo = ``;
@@ -454,7 +691,16 @@ app.post('/create-group', async (req, res) => {
           const listingLink = `https://t.me/${botUsername}?startapp=listing_${listing_id}`;
           const ownerProfileLink = `https://t.me/${botUsername}?startapp=profile_${owner_id}`;
           participantsInfo += `🔗 Посмотреть объявление: <a href="${listingLink}">ссылка</a>\n`;
-          participantsInfo += `🔗 Посмотреть отзывы об арендодателе: <a href="${ownerProfileLink}">ссылка</a>\n\n`;
+          participantsInfo += `🔗 Посмотреть отзывы об арендодателе: <a href="${ownerProfileLink}">ссылка</a>\n`;
+          
+          // ✅ НОВОЕ: Добавляем актуальную информацию профиля
+          if (ownerProfile) {
+            const profileInfo = formatProfileInfo(ownerProfile);
+            if (profileInfo) {
+              participantsInfo += `\n📊 <b>Информация об арендодателе:</b>\n${profileInfo}\n`;
+            }
+          }
+          participantsInfo += `\n`;
         }
         
         // Информация об арендаторе
@@ -462,6 +708,14 @@ app.post('/create-group', async (req, res) => {
           participantsInfo += `🔍 <b>Арендатор:</b> ${renterInfo.name}\n`;
           const renterProfileLink = `https://t.me/${botUsername}?startapp=profile_${renter_id}`;
           participantsInfo += `🔗 Посмотреть отзывы об арендаторе: <a href="${renterProfileLink}">ссылка</a>\n`;
+          
+          // ✅ НОВОЕ: Добавляем актуальную информацию профиля
+          if (renterProfile) {
+            const profileInfo = formatProfileInfo(renterProfile);
+            if (profileInfo) {
+              participantsInfo += `\n📊 <b>Информация об арендаторе:</b>\n${profileInfo}\n`;
+            }
+          }
         }
         
         await sendGroupMessage(participantsInfo);
